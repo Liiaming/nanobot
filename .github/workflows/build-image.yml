@@ -1,25 +1,20 @@
-name: Build Docker Image
+name: Build and Deploy Docker Image
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 拉取当前 Fork 的代码
+      # 始终构建 Fork 的 main 分支
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: main
 
-      # 记录当前 commit，便于识别构建产物
-      - name: Get commit
-        id: meta
-        shell: bash
-        run: |
-          echo "short_sha=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
-
-      # 使用仓库自带 Dockerfile 构建 linux/amd64 镜像
+      # 构建 nanobot:latest
       - name: Build image
         run: |
           docker build \
@@ -27,20 +22,78 @@ jobs:
             -t nanobot:latest \
             .
 
-      # 导出镜像并 gzip 压缩，同时生成 SHA256 校验文件
+      # 导出并压缩镜像，同时生成校验文件
       - name: Save image
         run: |
           docker save nanobot:latest | gzip -1 > nanobot-image.tar.gz
           sha256sum nanobot-image.tar.gz > nanobot-image.tar.gz.sha256
           ls -lh nanobot-image.tar.gz nanobot-image.tar.gz.sha256
 
-      # 上传为 GitHub Actions Artifact
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: nanobot-image-${{ steps.meta.outputs.short_sha }}
-          path: |
-            nanobot-image.tar.gz
-            nanobot-image.tar.gz.sha256
-          retention-days: 7
-          compression-level: 0
+      # 配置 SSH
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.NANOBOT_SSH_HOST }}
+          SSH_PORT: ${{ secrets.NANOBOT_SSH_PORT }}
+          SSH_USER: ${{ secrets.NANOBOT_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.NANOBOT_SSH_KEY }}
+        run: |
+          test -n "$SSH_HOST" || { echo "Missing secret: NANOBOT_SSH_HOST"; exit 1; }
+          test -n "$SSH_USER" || { echo "Missing secret: NANOBOT_SSH_USER"; exit 1; }
+          test -n "$SSH_PRIVATE_KEY" || { echo "Missing secret: NANOBOT_SSH_KEY"; exit 1; }
+
+          SSH_PORT="${SSH_PORT:-22}"
+          echo "SSH_PORT=$SSH_PORT" >> "$GITHUB_ENV"
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/nanobot_deploy
+          chmod 600 ~/.ssh/nanobot_deploy
+
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      # 传输镜像到服务器
+      - name: Upload image
+        env:
+          SSH_HOST: ${{ secrets.NANOBOT_SSH_HOST }}
+          SSH_USER: ${{ secrets.NANOBOT_SSH_USER }}
+        run: |
+          scp \
+            -i ~/.ssh/nanobot_deploy \
+            -P "$SSH_PORT" \
+            nanobot-image.tar.gz \
+            nanobot-image.tar.gz.sha256 \
+            "$SSH_USER@$SSH_HOST:/root/nanobot/"
+
+      # 加载新镜像并重启 nanobot
+      - name: Deploy
+        env:
+          SSH_HOST: ${{ secrets.NANOBOT_SSH_HOST }}
+          SSH_USER: ${{ secrets.NANOBOT_SSH_USER }}
+        run: |
+          ssh \
+            -i ~/.ssh/nanobot_deploy \
+            -p "$SSH_PORT" \
+            "$SSH_USER@$SSH_HOST" 'bash -se' <<'EOF'
+          set -euo pipefail
+
+          cd /root/nanobot
+
+          # 校验传输文件
+          sha256sum -c nanobot-image.tar.gz.sha256
+
+          # 备份当前镜像
+          if docker image inspect nanobot:latest >/dev/null 2>&1; then
+            docker tag nanobot:latest nanobot:backup
+          fi
+
+          # 加载新镜像
+          gzip -dc nanobot-image.tar.gz | docker load
+          docker image inspect nanobot:latest >/dev/null
+
+          # 重启服务
+          docker compose down
+          docker compose up -d
+          docker compose ps
+
+          # 清理传输文件
+          rm -f nanobot-image.tar.gz nanobot-image.tar.gz.sha256
+          EOF
