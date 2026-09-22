@@ -1,0 +1,46 @@
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 拉取当前 Fork 的代码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 记录当前 commit，便于识别构建产物
+      - name: Get commit
+        id: meta
+        shell: bash
+        run: |
+          echo "short_sha=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
+
+      # 使用仓库自带 Dockerfile 构建 linux/amd64 镜像
+      - name: Build image
+        run: |
+          docker build \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t nanobot:latest \
+            .
+
+      # 导出镜像并 gzip 压缩，同时生成 SHA256 校验文件
+      - name: Save image
+        run: |
+          docker save nanobot:latest | gzip -1 > nanobot-image.tar.gz
+          sha256sum nanobot-image.tar.gz > nanobot-image.tar.gz.sha256
+          ls -lh nanobot-image.tar.gz nanobot-image.tar.gz.sha256
+
+      # 上传为 GitHub Actions Artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanobot-image-${{ steps.meta.outputs.short_sha }}
+          path: |
+            nanobot-image.tar.gz
+            nanobot-image.tar.gz.sha256
+          retention-days: 7
+          compression-level: 0
