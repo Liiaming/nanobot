@@ -80,11 +80,6 @@ jobs:
           # 校验传输文件
           sha256sum -c nanobot-image.tar.gz.sha256
 
-          # 备份当前镜像
-          if docker image inspect nanobot:latest >/dev/null 2>&1; then
-            docker tag nanobot:latest nanobot:backup
-          fi
-
           # 加载新镜像
           gzip -dc nanobot-image.tar.gz | docker load
           docker image inspect nanobot:latest >/dev/null
