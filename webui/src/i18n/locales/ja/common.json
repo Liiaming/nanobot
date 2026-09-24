@@ -1,4 +1,43 @@
 {
+  "previewTabs": {
+    "title": "プレビュー",
+    "closeTab": "{{name}} を閉じる",
+    "closeAll": "プレビューパネルを閉じる",
+    "websiteInfo": "ウェブプレビューについて"
+  },
+  "webPreview": {
+    "viewLinks": "リンクを表示",
+    "back": "戻る",
+    "original": "元のリンク",
+    "actions": "リンク操作",
+    "open": "ウェブサイトをプレビュー",
+    "external": "ブラウザーで開く",
+    "copy": "リンクをコピー",
+    "copied": "リンクをコピーしました",
+    "copyFailed": "リンクをコピーできませんでした",
+    "title": "ウェブプレビュー",
+    "resize": "プレビューの幅を変更",
+    "refresh": "ウェブサイトを再読み込み",
+    "close": "ウェブプレビューを閉じる",
+    "isolated": "制限付きの分離プレビューです。ログインや一部の操作は利用できない場合があります。",
+    "blockedHint": "埋め込みを許可しないサイトもあります。空白やエラーの場合はブラウザーで開いてください。",
+    "loopback": "localhost はリモートゲートウェイではなく、このブラウザーの端末を指します。ポート転送は行いません。",
+    "native": "ネイティブホストでは埋め込みプレビューを利用できません。ブラウザーで開いてください。",
+    "unsupported": "このブラウザーは認証情報を分離したプレビューに対応していません。新しいタブで開いてください。",
+    "sameOrigin": "nanobot 自体は埋め込めません。新しいタブで開いてください。",
+    "mixedContent": "HTTPS ページでは HTTP サイトをプレビューできません。新しいタブで開いてください。",
+    "invalid": "このアドレスはプレビューできません。",
+    "frame": "ウェブプレビュー：{{host}}"
+  },
+  "starPrompt": {
+    "footerAction": "nanobot にスターを付ける",
+    "title": "nanobot のご利用ありがとうございます",
+    "description": "GitHub でスターを付けて、nanobot をより良くしていく取り組みを応援してください。",
+    "action": "スターを付ける",
+    "later": "今はしない",
+    "never": "今後表示しない",
+    "saveError": "ネットワークに問題が発生した可能性があります。この案内が再び表示されることがあります。"
+  },
   "app": {
     "brand": "nanobot",
     "loading": {
@@ -249,6 +288,7 @@
       "currentModel": "現在の設定",
       "brandLogos": "ブランドロゴ",
       "browserNotifications": "タスク通知",
+      "notificationSound": "完了音",
       "cliAppsCatalog": "カタログ",
       "cliAppsFilter": "フィルター",
       "engine": "エンジン",
@@ -292,6 +332,7 @@
       "selectedModelValue": "選択したモデルによって設定されます。",
       "brandLogos": "設定で第三者プロバイダーと CLI のロゴを表示します。",
       "browserNotifications": "このページがバックグラウンドにある場合のみ通知します。既定ではオフです。",
+      "notificationSound": "ターンが完了したら、ページがバックグラウンドにあっても短いチャイムを再生します。既定ではオフです。",
       "cliAppsCatalog": "nanobot がこのマシンで使用できるコマンドラインツールをインストールします。デスクトップアプリは変更しません。",
       "cliAppsFilter": "アプリ、カテゴリ、機能で検索します。",
       "logs": "デスクトップアプリのログフォルダーを開きます。",
@@ -540,6 +581,8 @@
       "presetNamePlaceholder": "例：文章作成用",
       "advancedOptions": "詳細オプション",
       "advancedSummary": "コンテキスト {{context}} · 最大 {{max}} トークン",
+      "contextWindowHint": "{{tokens}} トークン",
+      "contextWindowError": "200k、1m、131072 など、正のトークン数を入力してください。",
       "maxTokens": "最大出力トークン",
       "temperature": "温度",
       "reasoningEffort": "推論の強度",
@@ -1675,11 +1718,29 @@
     "continue": "続行"
   },
   "lightbox": {
+    "viewAll": "すべての画像（{{count}} 枚）を表示",
+    "zoomIn": "拡大",
+    "zoomOut": "縮小",
+    "resetZoom": "画面に合わせる",
+    "gestures": "ピンチまたはダブルクリックで拡大し、ドラッグで移動できます。+、−、0 キーで拡大・縮小・リセットできます。",
     "title": "画像プレビュー",
     "open": "画像を表示",
     "prev": "前の画像",
     "next": "次の画像",
     "close": "プレビューを閉じる"
+  },
+  "fileActions": {
+    "menu": "{{name}} のファイル操作",
+    "title": "ファイル操作",
+    "preview": "プレビュー",
+    "copyAbsolute": "絶対パスをコピー",
+    "copyRelative": "相対パスをコピー",
+    "copyReference": "元の参照をコピー",
+    "copied": "コピーしました",
+    "failed": "コピーできませんでした。再試行してください。",
+    "unavailable": "ファイルを解決できません。元の参照をコピーできます。",
+    "loading": "ファイルを確認中…",
+    "gatewayPath": "パスはゲートウェイのマシンを指します。"
   },
   "filePreview": {
     "aria": "ファイルプレビュー",

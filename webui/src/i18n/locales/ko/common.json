@@ -1,4 +1,43 @@
 {
+  "previewTabs": {
+    "title": "미리보기",
+    "closeTab": "{{name}} 닫기",
+    "closeAll": "미리보기 패널 닫기",
+    "websiteInfo": "웹 미리보기 정보"
+  },
+  "webPreview": {
+    "viewLinks": "링크 보기",
+    "back": "뒤로",
+    "original": "원래 링크",
+    "actions": "링크 작업",
+    "open": "웹사이트 미리보기",
+    "external": "브라우저에서 열기",
+    "copy": "링크 복사",
+    "copied": "링크를 복사했습니다",
+    "copyFailed": "링크를 복사하지 못했습니다",
+    "title": "웹사이트 미리보기",
+    "resize": "웹 미리보기 너비 조절",
+    "refresh": "웹사이트 새로고침",
+    "close": "웹 미리보기 닫기",
+    "isolated": "제한된 격리 미리보기입니다. 로그인 및 일부 상호작용이 작동하지 않을 수 있습니다.",
+    "blockedHint": "일부 사이트는 삽입을 차단합니다. 비어 있거나 실패하면 브라우저에서 여세요.",
+    "loopback": "localhost는 원격 게이트웨이가 아닌 이 브라우저의 기기를 가리킵니다. 포트는 전달되지 않습니다.",
+    "native": "네이티브 호스트에서는 삽입 미리보기를 지원하지 않습니다. 브라우저에서 여세요.",
+    "unsupported": "이 브라우저는 인증 정보 격리 미리보기를 지원하지 않습니다. 새 탭에서 여세요.",
+    "sameOrigin": "nanobot 앱 자체는 여기에 삽입할 수 없습니다. 새 탭에서 여세요.",
+    "mixedContent": "HTTPS 페이지에서 HTTP 사이트를 미리 볼 수 없습니다. 새 탭에서 여세요.",
+    "invalid": "이 주소를 미리 볼 수 없습니다.",
+    "frame": "웹 미리보기: {{host}}"
+  },
+  "starPrompt": {
+    "footerAction": "nanobot에 스타 남기기",
+    "title": "nanobot을 사용해 주셔서 감사합니다",
+    "description": "GitHub에서 스타를 눌러 nanobot을 계속 개선할 수 있도록 응원해 주세요.",
+    "action": "스타 남기기",
+    "later": "나중에",
+    "never": "다시 표시하지 않기",
+    "saveError": "네트워크에 문제가 있는 것 같습니다. 이 알림이 다시 표시될 수 있습니다."
+  },
   "app": {
     "brand": "nanobot",
     "loading": {
@@ -249,6 +288,7 @@
       "currentModel": "현재 설정",
       "brandLogos": "브랜드 로고",
       "browserNotifications": "작업 알림",
+      "notificationSound": "완료 알림음",
       "cliAppsCatalog": "카탈로그",
       "cliAppsFilter": "필터",
       "engine": "엔진",
@@ -292,6 +332,7 @@
       "selectedModelValue": "선택한 모델에 의해 설정됩니다.",
       "brandLogos": "설정에서 타사 제공업체와 CLI 로고를 표시합니다.",
       "browserNotifications": "이 페이지가 백그라운드에 있을 때만 알립니다. 기본값은 꺼짐입니다.",
+      "notificationSound": "턴이 끝나면 이 페이지가 백그라운드에 있어도 짧은 알림음을 재생합니다. 기본적으로 꺼져 있습니다.",
       "cliAppsCatalog": "nanobot이 이 컴퓨터에서 사용할 수 있는 명령줄 도구를 설치합니다. 데스크톱 앱은 변경하지 않습니다.",
       "cliAppsFilter": "앱, 카테고리 또는 기능으로 검색합니다.",
       "logs": "데스크톱 앱의 로그 폴더를 엽니다.",
@@ -540,6 +581,8 @@
       "presetNamePlaceholder": "예: 빠른 작성",
       "advancedOptions": "고급 옵션",
       "advancedSummary": "컨텍스트 {{context}} · 최대 {{max}} 토큰",
+      "contextWindowHint": "{{tokens}} 토큰",
+      "contextWindowError": "200k, 1m, 131072처럼 양수 토큰 수를 입력하세요.",
       "maxTokens": "최대 출력 토큰",
       "temperature": "온도",
       "reasoningEffort": "추론 강도",
@@ -1675,11 +1718,29 @@
     "continue": "계속"
   },
   "lightbox": {
+    "viewAll": "이미지 {{count}}개 모두 보기",
+    "zoomIn": "확대",
+    "zoomOut": "축소",
+    "resetZoom": "화면에 맞추기",
+    "gestures": "두 손가락이나 두 번 클릭으로 확대하고 드래그로 이동하세요. +, −, 0 키로 확대, 축소 또는 초기화할 수 있습니다.",
     "title": "이미지 미리보기",
     "open": "이미지 보기",
     "prev": "이전 이미지",
     "next": "다음 이미지",
     "close": "미리보기 닫기"
+  },
+  "fileActions": {
+    "menu": "{{name}} 파일 작업",
+    "title": "파일 작업",
+    "preview": "미리보기",
+    "copyAbsolute": "절대 경로 복사",
+    "copyRelative": "상대 경로 복사",
+    "copyReference": "원본 참조 복사",
+    "copied": "복사됨",
+    "failed": "복사하지 못했습니다. 다시 시도하세요.",
+    "unavailable": "파일을 확인할 수 없습니다. 원본 참조를 복사할 수 있습니다.",
+    "loading": "파일 확인 중…",
+    "gatewayPath": "경로는 게이트웨이 컴퓨터를 가리킵니다."
   },
   "filePreview": {
     "aria": "파일 미리보기",

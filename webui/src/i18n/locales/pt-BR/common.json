@@ -1,4 +1,43 @@
 {
+  "previewTabs": {
+    "title": "Prévia",
+    "closeTab": "Fechar {{name}}",
+    "closeAll": "Fechar painel de prévia",
+    "websiteInfo": "Sobre as prévias de sites"
+  },
+  "webPreview": {
+    "viewLinks": "Ver links",
+    "back": "Voltar",
+    "original": "Link original",
+    "actions": "Ações do link",
+    "open": "Pré-visualizar site",
+    "external": "Abrir no navegador",
+    "copy": "Copiar link",
+    "copied": "Link copiado",
+    "copyFailed": "Não foi possível copiar o link",
+    "title": "Prévia do site",
+    "resize": "Redimensionar prévia",
+    "refresh": "Atualizar site",
+    "close": "Fechar prévia do site",
+    "isolated": "Prévia isolada e limitada. O login e algumas interações podem não funcionar.",
+    "blockedHint": "Alguns sites bloqueiam a incorporação. Se a prévia ficar vazia ou falhar, abra no navegador.",
+    "loopback": "Localhost aponta para o dispositivo deste navegador, não para um gateway remoto. Nenhuma porta é encaminhada.",
+    "native": "O aplicativo nativo não permite prévias incorporadas. Abra o link no navegador.",
+    "unsupported": "Este navegador não permite prévias com credenciais isoladas. Abra em uma nova aba.",
+    "sameOrigin": "O próprio aplicativo nanobot não pode ser incorporado aqui. Abra em uma nova aba.",
+    "mixedContent": "Uma página HTTPS não pode exibir um site HTTP aqui. Abra em uma nova aba.",
+    "invalid": "Não é possível pré-visualizar este endereço.",
+    "frame": "Prévia do site: {{host}}"
+  },
+  "starPrompt": {
+    "footerAction": "Dê uma estrela ao nanobot",
+    "title": "Obrigado por usar o nanobot",
+    "description": "Dê uma estrela no GitHub para nos ajudar a continuar melhorando o nanobot.",
+    "action": "Dar uma estrela",
+    "later": "Agora não",
+    "never": "Não perguntar novamente",
+    "saveError": "Pode haver um problema de conexão. Este lembrete pode aparecer novamente."
+  },
   "app": {
     "brand": "nanobot",
     "loading": {
@@ -240,6 +279,8 @@
       "presetNamePlaceholder": "ex.: Escrita rápida",
       "advancedOptions": "Opções avançadas",
       "advancedSummary": "Contexto {{context}} · Máx. {{max}} tokens",
+      "contextWindowHint": "{{tokens}} tokens",
+      "contextWindowError": "Insira uma quantidade positiva de tokens, como 200k, 1m ou 131072.",
       "maxTokens": "Máx. de tokens de saída",
       "temperature": "Temperatura",
       "reasoningEffort": "Esforço de raciocínio",
@@ -291,6 +332,7 @@
       "codeWrap": "Quebra de linha no código",
       "brandLogos": "Logos de marca",
       "browserNotifications": "Notificações de tarefas",
+      "notificationSound": "Som de conclusão",
       "maxResults": "Máx. de resultados",
       "timeout": "Tempo limite",
       "jinaReader": "Leitor Jina",
@@ -336,6 +378,7 @@
       "codeWrap": "Mantém linhas longas de código legíveis em telas menores.",
       "brandLogos": "Mostra logotipos de provedores terceiros e de CLIs em Configurações.",
       "browserNotifications": "Notifica somente quando esta página está em segundo plano. Desativado por padrão.",
+      "notificationSound": "Toca um breve sinal sonoro quando um turno termina, mesmo quando esta página está em segundo plano. Desativado por padrão.",
       "maxResults": "Número máximo de resultados por busca na web.",
       "timeout": "Segundos antes de uma requisição de busca expirar.",
       "jinaReader": "Usa o Jina Reader para ler páginas web quando disponível.",
@@ -1689,11 +1732,29 @@
     "continue": "Continuar"
   },
   "lightbox": {
+    "viewAll": "Ver todas as {{count}} imagens",
+    "zoomIn": "Ampliar",
+    "zoomOut": "Reduzir",
+    "resetZoom": "Ajustar imagem",
+    "gestures": "Faça o gesto de pinça ou clique duas vezes para ampliar. Arraste para mover. Use +, − ou 0 para ampliar ou redefinir.",
     "title": "Pré-visualização de imagem",
     "open": "Ver imagem",
     "prev": "Imagem anterior",
     "next": "Próxima imagem",
     "close": "Fechar pré-visualização"
+  },
+  "fileActions": {
+    "menu": "Ações do arquivo {{name}}",
+    "title": "Ações do arquivo",
+    "preview": "Pré-visualizar",
+    "copyAbsolute": "Copiar caminho absoluto",
+    "copyRelative": "Copiar caminho relativo",
+    "copyReference": "Copiar referência",
+    "copied": "Copiado",
+    "failed": "Não foi possível copiar. Tente novamente.",
+    "unavailable": "Não foi possível localizar o arquivo. Você pode copiar a referência original.",
+    "loading": "Localizando arquivo…",
+    "gatewayPath": "Os caminhos se referem à máquina do gateway."
   },
   "filePreview": {
     "aria": "Pré-visualização de arquivo",

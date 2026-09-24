@@ -1,4 +1,43 @@
 {
+  "previewTabs": {
+    "title": "Preview",
+    "closeTab": "Close {{name}}",
+    "closeAll": "Close preview pane",
+    "websiteInfo": "About website previews"
+  },
+  "webPreview": {
+    "viewLinks": "View links",
+    "back": "Back",
+    "original": "Original link",
+    "actions": "Link actions",
+    "open": "Preview website",
+    "external": "Open in browser",
+    "copy": "Copy link",
+    "copied": "Link copied",
+    "copyFailed": "Could not copy link",
+    "title": "Website preview",
+    "resize": "Resize website preview",
+    "refresh": "Refresh website",
+    "close": "Close website preview",
+    "isolated": "Restricted, isolated preview. Sign-in and interactive features may not work.",
+    "blockedHint": "Some sites block embedding. If this view stays blank or fails, open it in your browser.",
+    "loopback": "Localhost points to this browser’s device, not a remote gateway. No ports are forwarded.",
+    "native": "Embedded previews are unavailable in the native host. Open this link in your browser.",
+    "unsupported": "This browser does not support credential-isolated previews. Open this link in a new tab.",
+    "sameOrigin": "The nanobot application itself cannot be embedded here. Open it in a new tab.",
+    "mixedContent": "An HTTPS page cannot preview an HTTP website here. Open it in a new tab.",
+    "invalid": "This address cannot be previewed.",
+    "frame": "Website preview: {{host}}"
+  },
+  "starPrompt": {
+    "footerAction": "Star nanobot on GitHub",
+    "title": "Thanks for using nanobot",
+    "description": "Star nanobot on GitHub to help us keep improving it.",
+    "action": "Star on GitHub",
+    "later": "Not now",
+    "never": "Don’t ask again",
+    "saveError": "There may be a network issue. This reminder may appear again."
+  },
   "app": {
     "brand": "nanobot",
     "loading": {
@@ -426,6 +465,8 @@
       "presetNamePlaceholder": "e.g. Fast writing",
       "advancedOptions": "Advanced options",
       "advancedSummary": "Context {{context}} · Max {{max}} tokens",
+      "contextWindowHint": "{{tokens}} tokens",
+      "contextWindowError": "Enter a positive token count, such as 200k, 1m, or 131072.",
       "maxTokens": "Max output tokens",
       "temperature": "Temperature",
       "reasoningEffort": "Reasoning effort",
@@ -477,6 +518,7 @@
       "codeWrap": "Code wrapping",
       "brandLogos": "Brand logos",
       "browserNotifications": "Task notifications",
+      "notificationSound": "Completion sound",
       "maxResults": "Max results",
       "timeout": "Timeout",
       "jinaReader": "Jina reader",
@@ -522,6 +564,7 @@
       "codeWrap": "Keep long code lines readable on smaller screens.",
       "brandLogos": "Show third-party provider and CLI logos in Settings.",
       "browserNotifications": "Notify only when this page is in the background. Off by default.",
+      "notificationSound": "Play a short chime when a turn finishes, even when this page is in the background. Off by default.",
       "maxResults": "Maximum number of results returned by each web search.",
       "timeout": "How long to wait for a search request to finish.",
       "jinaReader": "Use Jina Reader to read web pages when available.",
@@ -1875,11 +1918,29 @@
     "continue": "Continue"
   },
   "lightbox": {
+    "viewAll": "View all {{count}} images",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "resetZoom": "Fit image",
+    "gestures": "Pinch or double-click to zoom. Drag to move when zoomed. Use +, − or 0 to zoom or reset.",
     "title": "Image preview",
     "open": "View image",
     "prev": "Previous image",
     "next": "Next image",
     "close": "Close image preview"
+  },
+  "fileActions": {
+    "menu": "File actions for {{name}}",
+    "title": "File actions",
+    "preview": "Preview",
+    "copyAbsolute": "Copy absolute path",
+    "copyRelative": "Copy relative path",
+    "copyReference": "Copy reference",
+    "copied": "Copied",
+    "failed": "Could not copy. Please try again.",
+    "unavailable": "Could not resolve this file. You can copy the original reference.",
+    "loading": "Resolving file…",
+    "gatewayPath": "Paths refer to the gateway machine."
   },
   "filePreview": {
     "aria": "File preview",

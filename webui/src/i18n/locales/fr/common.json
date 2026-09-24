@@ -1,4 +1,43 @@
 {
+  "previewTabs": {
+    "title": "Aperçu",
+    "closeTab": "Fermer {{name}}",
+    "closeAll": "Fermer le panneau d’aperçu",
+    "websiteInfo": "À propos des aperçus web"
+  },
+  "webPreview": {
+    "viewLinks": "Voir les liens",
+    "back": "Retour",
+    "original": "Lien d’origine",
+    "actions": "Actions du lien",
+    "open": "Aperçu du site",
+    "external": "Ouvrir dans le navigateur",
+    "copy": "Copier le lien",
+    "copied": "Lien copié",
+    "copyFailed": "Impossible de copier le lien",
+    "title": "Aperçu web",
+    "resize": "Redimensionner l’aperçu web",
+    "refresh": "Actualiser le site",
+    "close": "Fermer l’aperçu web",
+    "isolated": "Aperçu isolé et limité. La connexion et certaines interactions peuvent ne pas fonctionner.",
+    "blockedHint": "Certains sites bloquent l’intégration. Si la vue reste vide ou échoue, ouvrez-la dans le navigateur.",
+    "loopback": "Localhost désigne l’appareil de ce navigateur, pas une passerelle distante. Aucun port n’est redirigé.",
+    "native": "L’application native ne prend pas en charge les aperçus intégrés. Ouvrez ce lien dans le navigateur.",
+    "unsupported": "Ce navigateur ne prend pas en charge les aperçus aux identifiants isolés. Ouvrez un nouvel onglet.",
+    "sameOrigin": "L’application nanobot elle-même ne peut pas être intégrée ici. Ouvrez un nouvel onglet.",
+    "mixedContent": "Une page HTTPS ne peut pas afficher un site HTTP ici. Ouvrez un nouvel onglet.",
+    "invalid": "Cette adresse ne peut pas être prévisualisée.",
+    "frame": "Aperçu web : {{host}}"
+  },
+  "starPrompt": {
+    "footerAction": "Ajouter une étoile à nanobot",
+    "title": "Merci d’utiliser nanobot",
+    "description": "Ajoutez une étoile sur GitHub pour nous aider à continuer à améliorer nanobot.",
+    "action": "Mettre une étoile",
+    "later": "Pas maintenant",
+    "never": "Ne plus demander",
+    "saveError": "Il y a peut-être un problème de connexion. Ce rappel pourrait réapparaître."
+  },
   "app": {
     "brand": "nanobot",
     "loading": {
@@ -249,6 +288,7 @@
       "currentModel": "Configuration actuelle",
       "brandLogos": "Logos de marque",
       "browserNotifications": "Notifications de tâches",
+      "notificationSound": "Son de fin de tâche",
       "cliAppsCatalog": "Catalogue",
       "cliAppsFilter": "Filtre",
       "engine": "Moteur",
@@ -292,6 +332,7 @@
       "selectedModelValue": "Défini par le modèle sélectionné.",
       "brandLogos": "Affiche les logos de fournisseurs tiers et CLI dans les Réglages.",
       "browserNotifications": "Notifier uniquement lorsque cette page est en arrière-plan. Désactivé par défaut.",
+      "notificationSound": "Joue un bref carillon lorsqu’un tour se termine, même si cette page est en arrière-plan. Désactivé par défaut.",
       "cliAppsCatalog": "Installe les outils en ligne de commande que nanobot peut utiliser sur cette machine. Les applications de bureau ne sont pas modifiées.",
       "cliAppsFilter": "Recherchez par application, catégorie ou capacité.",
       "logs": "Ouvre le dossier des journaux de l’application de bureau.",
@@ -540,6 +581,8 @@
       "presetNamePlaceholder": "p. ex. Rédaction rapide",
       "advancedOptions": "Options avancées",
       "advancedSummary": "Contexte {{context}} · Max. {{max}} tokens",
+      "contextWindowHint": "{{tokens}} tokens",
+      "contextWindowError": "Saisissez un nombre positif de tokens, par exemple 200k, 1m ou 131072.",
       "maxTokens": "Tokens de sortie max.",
       "temperature": "Température",
       "reasoningEffort": "Effort de raisonnement",
@@ -1675,11 +1718,29 @@
     "continue": "Continuer"
   },
   "lightbox": {
+    "viewAll": "Voir les {{count}} images",
+    "zoomIn": "Agrandir",
+    "zoomOut": "Réduire",
+    "resetZoom": "Ajuster l’image",
+    "gestures": "Pincez ou double-cliquez pour zoomer. Faites glisser pour déplacer. Utilisez +, − ou 0 pour zoomer ou réinitialiser.",
     "title": "Aperçu de l’image",
     "open": "Voir l’image",
     "prev": "Image précédente",
     "next": "Image suivante",
     "close": "Fermer l’aperçu"
+  },
+  "fileActions": {
+    "menu": "Actions du fichier {{name}}",
+    "title": "Actions du fichier",
+    "preview": "Aperçu",
+    "copyAbsolute": "Copier le chemin absolu",
+    "copyRelative": "Copier le chemin relatif",
+    "copyReference": "Copier la référence",
+    "copied": "Copié",
+    "failed": "Impossible de copier. Réessayez.",
+    "unavailable": "Impossible de résoudre ce fichier. Vous pouvez copier la référence d’origine.",
+    "loading": "Résolution du fichier…",
+    "gatewayPath": "Les chemins désignent la machine de la passerelle."
   },
   "filePreview": {
     "aria": "Aperçu du fichier",

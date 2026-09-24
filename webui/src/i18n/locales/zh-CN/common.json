@@ -1,4 +1,43 @@
 {
+  "previewTabs": {
+    "title": "预览",
+    "closeTab": "关闭 {{name}}",
+    "closeAll": "关闭预览栏",
+    "websiteInfo": "关于网页预览"
+  },
+  "webPreview": {
+    "viewLinks": "查看链接",
+    "back": "返回",
+    "original": "原始链接",
+    "actions": "链接操作",
+    "open": "预览网页",
+    "external": "在浏览器中打开",
+    "copy": "复制链接",
+    "copied": "链接已复制",
+    "copyFailed": "无法复制链接",
+    "title": "网页预览",
+    "resize": "调整网页预览宽度",
+    "refresh": "刷新网页",
+    "close": "关闭网页预览",
+    "isolated": "受限的隔离预览，登录及部分交互功能可能无法使用。",
+    "blockedHint": "部分网站禁止嵌入。如果页面空白或加载失败，请在浏览器中打开。",
+    "loopback": "localhost 指向当前浏览器所在设备，而非远程网关。不会自动转发端口。",
+    "native": "原生客户端暂不支持嵌入预览，请在浏览器中打开此链接。",
+    "unsupported": "此浏览器不支持凭据隔离预览，请在新标签页中打开。",
+    "sameOrigin": "不能在此嵌入 nanobot 应用自身，请在新标签页中打开。",
+    "mixedContent": "HTTPS 页面不能在此预览 HTTP 网站，请在新标签页中打开。",
+    "invalid": "无法预览此地址。",
+    "frame": "网页预览：{{host}}"
+  },
+  "starPrompt": {
+    "footerAction": "给 nanobot 点个 Star",
+    "title": "感谢使用 nanobot",
+    "description": "欢迎来 GitHub 点个 Star，支持我们继续改进。",
+    "action": "点个 Star",
+    "later": "暂时不了",
+    "never": "不再提醒",
+    "saveError": "网络可能出了点问题，之后可能还会弹出此提醒。"
+  },
   "app": {
     "brand": "nanobot",
     "loading": {
@@ -426,6 +465,8 @@
       "presetNamePlaceholder": "例如：快速写作",
       "advancedOptions": "高级选项",
       "advancedSummary": "上下文 {{context}} · 输出上限 {{max}} Token",
+      "contextWindowHint": "{{tokens}} Token",
+      "contextWindowError": "请输入正数 Token 数量，例如 200k、1m 或 131072。",
       "maxTokens": "输出 Token 上限",
       "temperature": "温度",
       "reasoningEffort": "推理强度",
@@ -477,6 +518,7 @@
       "codeWrap": "代码换行",
       "brandLogos": "品牌图标",
       "browserNotifications": "任务通知",
+      "notificationSound": "完成提示音",
       "maxResults": "搜索结果数量上限",
       "timeout": "搜索超时（秒）",
       "jinaReader": "Jina Reader",
@@ -522,6 +564,7 @@
       "codeWrap": "让长代码行在小屏幕上也易读。",
       "brandLogos": "在设置中显示提供商和命令行应用的品牌图标。",
       "browserNotifications": "仅在页面位于后台时通知，默认关闭。",
+      "notificationSound": "回合结束时播放短促提示音，页面在后台时也会播放。默认关闭。",
       "maxResults": "每次网络搜索最多返回多少条结果。",
       "timeout": "每次搜索请求最长等待多久。",
       "jinaReader": "读取网页时，优先使用可用的 Jina Reader。",
@@ -1875,11 +1918,29 @@
     "continue": "继续"
   },
   "lightbox": {
+    "viewAll": "查看全部 {{count}} 张图片",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "resetZoom": "适应窗口",
+    "gestures": "双指捏合或双击缩放，放大后拖动查看。也可按 +、− 或 0 缩放或复位。",
     "title": "图片预览",
     "open": "查看图片",
     "prev": "上一张",
     "next": "下一张",
     "close": "关闭预览"
+  },
+  "fileActions": {
+    "menu": "{{name}} 的文件操作",
+    "title": "文件操作",
+    "preview": "预览",
+    "copyAbsolute": "复制绝对路径",
+    "copyRelative": "复制相对路径",
+    "copyReference": "复制原始引用",
+    "copied": "已复制",
+    "failed": "复制失败，请重试。",
+    "unavailable": "无法解析此文件，可复制原始引用。",
+    "loading": "正在解析文件…",
+    "gatewayPath": "路径指向网关所在的机器。"
   },
   "filePreview": {
     "aria": "文件预览",
