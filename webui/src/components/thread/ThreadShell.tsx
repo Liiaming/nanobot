@@ -16,6 +16,7 @@ import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { ModelFallbackNotice } from "@/components/thread/ModelFallbackNotice";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
+import type { ComposerDraftStore } from "@/lib/composer-draft";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import type {
   ComposerContextUsage,
@@ -411,6 +412,7 @@ interface ThreadShellProps {
   temporaryChatIds?: readonly string[];
   messageCache?: ThreadMessageCache;
   filePreviewStore?: FilePreviewStore;
+  draftStore?: ComposerDraftStore;
   temporaryChatEnabled?: boolean;
   onTemporaryChatEnabledChange?: (enabled: boolean) => void;
   onToggleSidebar: () => void;
@@ -447,6 +449,7 @@ interface ThreadShellProps {
   workspaceError?: string | null;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
   settingsSnapshot?: SettingsPayload | null;
+  settingsLoading?: boolean;
   onOpenModelSettings?: () => void;
   skills?: SkillSummary[];
 }
@@ -540,6 +543,7 @@ interface PendingFirstMessage {
 }
 
 interface InstalledSettingItemsOptions<Payload, Item> {
+  requestCount: number;
   getToken: () => string;
   eventName: string;
   fetchPayload: (token: string) => Promise<Payload>;
@@ -548,6 +552,7 @@ interface InstalledSettingItemsOptions<Payload, Item> {
 }
 
 function useInstalledSettingItems<Payload, Item>({
+  requestCount,
   getToken,
   eventName,
   fetchPayload,
@@ -555,6 +560,8 @@ function useInstalledSettingItems<Payload, Item>({
   selectItems,
 }: InstalledSettingItemsOptions<Payload, Item>): Item[] {
   const [items, setItems] = useState<Item[]>([]);
+  const loadedRef = useRef(false);
+  const pendingRef = useRef<Promise<Payload> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -566,14 +573,18 @@ function useInstalledSettingItems<Payload, Item>({
       if (refreshing) return;
       refreshing = true;
       const version = payloadVersion;
+      const pending = pendingRef.current ?? fetchPayload(getToken());
+      pendingRef.current = pending;
       try {
-        const payload = await fetchPayload(getToken());
+        const payload = await pending;
         if (!cancelled && version === payloadVersion) {
+          loadedRef.current = true;
           setItems(selectItems(payload));
         }
       } catch {
         // Keep the last successful catalog during transient refresh failures.
       } finally {
+        if (pendingRef.current === pending) pendingRef.current = null;
         refreshing = false;
         if (refreshAfterFlight && !cancelled) {
           refreshAfterFlight = false;
@@ -582,19 +593,20 @@ function useInstalledSettingItems<Payload, Item>({
       }
     };
     const queueRefresh = () => {
-      if (document.visibilityState === "hidden" || refreshQueued) return;
+      if (!requestCount || document.visibilityState === "hidden" || refreshQueued) return;
       refreshQueued = true;
       queueMicrotask(() => {
         refreshQueued = false;
         if (!cancelled) void refresh();
       });
     };
-    void refresh();
+    if (requestCount && !loadedRef.current) void refresh();
 
     const refreshOnChanged = (event: Event) => {
       const payload = (event as CustomEvent<unknown>).detail;
       if (isPayload(payload)) {
         payloadVersion += 1;
+        loadedRef.current = true;
         setItems(selectItems(payload));
         return;
       }
@@ -605,16 +617,12 @@ function useInstalledSettingItems<Payload, Item>({
       queueRefresh();
     };
 
-    window.addEventListener("focus", queueRefresh);
-    document.addEventListener("visibilitychange", queueRefresh);
     window.addEventListener(eventName, refreshOnChanged);
     return () => {
       cancelled = true;
-      window.removeEventListener("focus", queueRefresh);
-      document.removeEventListener("visibilitychange", queueRefresh);
       window.removeEventListener(eventName, refreshOnChanged);
     };
-  }, [eventName, fetchPayload, getToken, isPayload, selectItems]);
+  }, [requestCount, eventName, fetchPayload, getToken, isPayload, selectItems]);
 
   return items;
 }
@@ -627,6 +635,7 @@ export function ThreadShell({
   temporaryChatIds = [],
   messageCache,
   filePreviewStore,
+  draftStore,
   temporaryChatEnabled = false,
   onTemporaryChatEnabledChange,
   onToggleSidebar,
@@ -657,6 +666,7 @@ export function ThreadShell({
   workspaceError = null,
   onWorkspaceScopeChange,
   settingsSnapshot = null,
+  settingsLoading = false,
   onOpenModelSettings,
   skills = [],
 }: ThreadShellProps) {
@@ -696,7 +706,10 @@ export function ThreadShell({
   }, [client]);
   const [booting, setBooting] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const [mentionCatalogRequestCount, setMentionCatalogRequestCount] = useState(0);
+  const requestMentionCatalogs = useCallback(() => setMentionCatalogRequestCount((count) => count + 1), []);
   const cliApps = useInstalledSettingItems({
+    requestCount: mentionCatalogRequestCount,
     getToken,
     eventName: CLI_APPS_CHANGED_EVENT,
     fetchPayload: fetchInstalledCliApps,
@@ -704,6 +717,7 @@ export function ThreadShell({
     selectItems: installedCliAppsFromPayload,
   });
   const mcpPresets = useInstalledSettingItems({
+    requestCount: mentionCatalogRequestCount,
     getToken,
     eventName: MCP_PRESETS_CHANGED_EVENT,
     fetchPayload: fetchMcpPresets,
@@ -728,7 +742,15 @@ export function ThreadShell({
   const previewOpen = Boolean(activePreview);
   const [filePreviewMaxWidth, setFilePreviewMaxWidth] = useState(FILE_PREVIEW_MAX_WIDTH);
   const filePreviewWidth = clampFilePreviewWidth(previewState.width, filePreviewMaxWidth);
-  const [quotedContext, setQuotedContext] = useState<string | null>(null);
+  const draftKey = session?.key ?? (temporaryChatEnabled ? "new:temporary" : "new:chat");
+  const persistDraft = session ? !temporary : !temporaryChatEnabled;
+  const [quote, setQuote] = useState<{ key: string; text: string | null } | null>(null);
+  const quotedContext = quote?.key === draftKey
+    ? quote.text
+    : draftStore?.get(draftKey, persistDraft)?.quotedContext ?? null;
+  const setQuotedContext = useCallback((text: string | null) => {
+    setQuote({ key: draftKey, text });
+  }, [draftKey]);
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const shellRef = useRef<HTMLElement | null>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -865,7 +887,6 @@ export function ThreadShell({
       filePreviewCloseTimerRef.current = null;
     }
     setClosingPreview(null);
-    setQuotedContext(null);
     setSubmittedViewportTurnId(null);
   }, [previewSessionKey]);
 
@@ -885,7 +906,7 @@ export function ThreadShell({
   const handleQuoteSelection = useCallback((text: string) => {
     setQuotedContext(text);
     setComposerFocusSignal((value) => value + 1);
-  }, []);
+  }, [setQuotedContext]);
 
   useEffect(() => {
     return () => {
@@ -897,6 +918,10 @@ export function ThreadShell({
   }, []);
 
   const displayMessages = useMemo(() => projectWebuiThreadMessages(messages), [messages]);
+  const hasAppMentions = displayMessages.some((message) => message.cliApps?.length || message.mcpPresets?.length);
+  useEffect(() => {
+    if (hasAppMentions) requestMentionCatalogs();
+  }, [hasAppMentions, requestMentionCatalogs]);
   const composerContextUsage = useMemo(
     () => latestComposerContextUsage(displayMessages),
     [displayMessages],
@@ -1094,8 +1119,8 @@ export function ThreadShell({
       setSettings(settingsSnapshot);
       return;
     }
-    void refreshModelSettings();
-  }, [refreshModelSettings, settingsSnapshot]);
+    if (!settingsLoading) void refreshModelSettings();
+  }, [refreshModelSettings, settingsLoading, settingsSnapshot]);
 
   useEffect(() => {
     return client.onRuntimeModelUpdate(() => {
@@ -1491,6 +1516,7 @@ export function ThreadShell({
         activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
         setSubmittedViewportTurnId(submitted.turnId);
       }
+      return submitted !== null;
     },
     [chatId, send, withWorkspaceScope],
   );
@@ -1700,6 +1726,10 @@ export function ThreadShell({
       ) : null}
       {session ? (
         <ThreadComposer
+          key={draftKey}
+          draftKey={draftKey}
+          draftStore={draftStore}
+          persistDraft={persistDraft}
           onSend={handleThreadSend}
           disabled={!chatId}
           inputAriaLabel={composerInputAriaLabel}
@@ -1723,6 +1753,7 @@ export function ThreadShell({
           recentRoundUsage={composerRoundUsage}
           variant={composerVariant}
           slashCommands={availableSlashCommands}
+          onMentionSearch={requestMentionCatalogs}
           cliApps={cliApps}
           mcpPresets={mcpPresets}
           sessions={mentionSessions}
@@ -1749,6 +1780,10 @@ export function ThreadShell({
         />
       ) : (
         <ThreadComposer
+          key={draftKey}
+          draftKey={draftKey}
+          draftStore={draftStore}
+          persistDraft={persistDraft}
           onSend={handleWelcomeSend}
           disabled={booting}
           inputAriaLabel={composerInputAriaLabel}
@@ -1772,6 +1807,7 @@ export function ThreadShell({
           recentRoundUsage={composerRoundUsage}
           variant="hero"
           slashCommands={availableSlashCommands}
+          onMentionSearch={requestMentionCatalogs}
           cliApps={cliApps}
           mcpPresets={mcpPresets}
           sessions={mentionSessions}
@@ -1791,6 +1827,8 @@ export function ThreadShell({
           onWorkspaceScopeChange={onWorkspaceScopeChange}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}
+          quotedContext={quotedContext}
+          onQuotedContextChange={setQuotedContext}
         />
       )}
     </>
