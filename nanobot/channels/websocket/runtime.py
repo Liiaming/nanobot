@@ -676,6 +676,7 @@ class WebSocketChannel(BaseChannel):
             )
 
     async def start(self) -> None:
+        self.gateway.http.remote_instances.resume()
         from nanobot.utils.logging_bridge import redirect_lib_logging
 
         redirect_lib_logging("websockets", level="WARNING")
@@ -805,6 +806,7 @@ class WebSocketChannel(BaseChannel):
             client_id = client_id[:128]
 
         default_chat_id = str(uuid.uuid4())
+        from nanobot.webui.client_contract import gateway_identity
 
         try:
             await connection.send(
@@ -813,9 +815,8 @@ class WebSocketChannel(BaseChannel):
                         "event": "ready",
                         "chat_id": default_chat_id,
                         "client_id": client_id,
-                        **({"terminal": {
-                            "protocolVersion": 1, "gatewayId": self.gateway.tokens.instance_id,
-                        }} if _query_first(query, "terminal_protocol") == "1" else {}),
+                        **({"terminal": gateway_identity(self.gateway.tokens.instance_id)}
+                           if _query_first(query, "terminal_protocol") == "1" else {}),
                     },
                     ensure_ascii=False,
                 )
@@ -880,6 +881,7 @@ class WebSocketChannel(BaseChannel):
     # -- Outbound WebSocket events -----------------------------------------
 
     async def stop(self) -> None:
+        await self.gateway.http.remote_instances.close()
         server_task = self._server_task
         if (
             not self._running
