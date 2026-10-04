@@ -2436,6 +2436,9 @@ describe("ThreadComposer", () => {
     expect(screen.queryByText("MCP servers")).not.toBeInTheDocument();
     const gimp = screen.getByRole("option", { name: /GIMP @gimp .* CLI/i });
     const browserbase = screen.getByRole("option", { name: /Browserbase @browserbase .* MCP/i });
+    // Reuse the app's 44px coarse-pointer targets without changing desktop density.
+    expect(gimp).toHaveClass("touch-target");
+    expect(browserbase).toHaveClass("touch-target");
     expect(within(gimp).getByText("CLI")).toBeInTheDocument();
     expect(within(browserbase).getByText("MCP")).toBeInTheDocument();
     expect(within(gimp).getByText("@gimp")).toBeInTheDocument();
@@ -2738,6 +2741,95 @@ describe("ThreadComposer", () => {
       expect(palette.className).toContain("bottom-full");
       expect(palette).toHaveStyle({ maxHeight: "112px" });
     });
+  });
+
+  it.each(["/", "@"]) ("fits %s suggestions in the app frame while iOS pans the keyboard", (trigger) => {
+    stubVisualViewport({ height: 396, offsetTop: 350 });
+    let formTop = 274;
+    let frameHeight = 396;
+    vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => rect({ top: formTop, width: 388, height: 112 }),
+    );
+    vi.spyOn(HTMLDivElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => rect({ top: 0, width: 420, height: frameHeight }),
+    );
+    render(
+      <div id="root" className="visual-viewport" style={{ overflowY: "hidden" }}>
+        <ThreadComposer onSend={vi.fn()} slashCommands={COMMANDS} cliApps={CLI_APPS} />
+      </div>,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: trigger, selectionStart: 1 } });
+    const palette = screen.getByRole("listbox");
+    expect(palette).toHaveClass("bottom-full");
+    expect(palette).toHaveStyle({ maxHeight: "266px" });
+
+    // Keyboard dismissal moves the composer; keep measuring the same frame.
+    formTop = 620;
+    frameHeight = 746;
+    Object.assign(window.visualViewport!, { height: 746, offsetTop: 0 });
+    act(() => window.visualViewport!.dispatchEvent(new Event("resize")));
+    expect(palette).toHaveStyle({ maxHeight: "288px" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(input).not.toHaveValue(trigger);
+  });
+
+  it.each(["/", "@"]) ("keeps %s selectable beside the input in a short landscape frame", (trigger) => {
+    stubVisualViewport({ height: 128, offsetTop: 208 });
+    let landscape = true;
+    vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => rect({ top: landscape ? 44 : 274, width: landscape ? 744 : 388, height: 112 }),
+    );
+    vi.spyOn(HTMLDivElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+      return this.id === "root"
+        ? rect({ top: 0, width: landscape ? 776 : 420, height: landscape ? 128 : 396 })
+        : rect({ top: landscape ? 44 : 0, width: landscape ? 776 : 420, height: landscape ? 84 : 396 });
+    });
+    const onSend = vi.fn();
+    render(
+      <div id="root" className="visual-viewport short-visual-viewport" style={{ overflowY: "hidden" }}>
+        <div style={{ overflowY: "auto" }}>
+          <ThreadComposer onSend={onSend} slashCommands={COMMANDS} cliApps={CLI_APPS} />
+        </div>
+      </div>,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: trigger, selectionStart: 1 } });
+    const palette = screen.getByRole("listbox");
+    expect(palette).toHaveClass("col-start-2");
+    expect(palette).not.toHaveClass("absolute");
+    expect(palette).toHaveStyle({ maxHeight: "84px" });
+    expect(input.closest("form")).toHaveAttribute("data-palette-beside", "true");
+
+    // Rotation restores the ordinary floating menu, without changing the draft.
+    landscape = false;
+    document.getElementById("root")!.classList.remove("short-visual-viewport");
+    Object.assign(window.visualViewport!, { height: 396, offsetTop: 350 });
+    act(() => window.visualViewport!.dispatchEvent(new Event("resize")));
+    expect(palette).toHaveClass("bottom-full");
+    expect(palette).toHaveStyle({ maxHeight: "266px" });
+    expect(input).toHaveValue(trigger);
+    fireEvent.mouseDown(screen.getAllByRole("option")[0]!);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(input.closest("form")).not.toHaveAttribute("data-palette-beside");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("uses visual bounds outside fitting (pinch zoom: %s)", (zoomed) => {
+    stubVisualViewport({ height: 300, offsetTop: 100 });
+    if (zoomed) Object.assign(window.visualViewport!, { scale: 2 });
+    vi.spyOn(HTMLFormElement.prototype, "getBoundingClientRect").mockReturnValue(
+      rect({ top: 220, width: 390, height: 100 }),
+    );
+    render(
+      <div id="root" className={zoomed ? "visual-viewport" : undefined}>
+        <ThreadComposer onSend={vi.fn()} slashCommands={COMMANDS} />
+      </div>,
+    );
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "/" } });
+    expect(screen.getByRole("listbox")).toHaveStyle({ maxHeight: "112px" });
+    expect(screen.getByRole("listbox")).toHaveClass("bottom-full");
   });
 
   it("dismisses the slash command palette on outside click", () => {
