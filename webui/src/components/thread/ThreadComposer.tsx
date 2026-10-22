@@ -1,3 +1,4 @@
+import { pastedFilePath, PastedPathRange, isLocalAttachment, type LocalAttachment } from "../../../../packages/client-events/attachments";
 import {
   NewChatIcon,
   CompactIcon,
@@ -45,7 +46,11 @@ import {
   mcpPresetInitials,
   splitCapabilityMentionSegments,
 } from "@/components/CliAppMentionText";
-import type { CapabilityMentionSegment } from "@/lib/composer-mention-text";
+import {
+  composerMentionText,
+  isCapabilityMentionStart,
+  type CapabilityMentionSegment,
+} from "@/lib/composer-mention-text";
 import { INLINE_TOKEN_HIGHLIGHT_COLOR } from "@/components/InlineTokenHighlight";
 import {
   ArrowUp,
@@ -53,6 +58,7 @@ import {
   ChevronUp,
   CornerDownRight,
   FileText,
+  Video,
   ImageIcon,
   Loader2,
   Quote,
@@ -90,13 +96,15 @@ import {
 } from "@/components/thread/ComposerUsagePopover";
 import {
   ACCEPT_ATTR,
+  acceptedAttachmentKind,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_BYTES,
   MAX_TOTAL_ATTACHMENT_BYTES,
+  MAX_VIDEO_BYTES,
+  MAX_VIDEOS_PER_MESSAGE,
   useAttachedImages,
   type AttachedImage,
   type AttachmentError,
-  type AttachmentKind,
   type RestoredReadyImage,
 } from "@/hooks/useAttachedImages";
 import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
@@ -138,8 +146,8 @@ import {
 } from "@/lib/session-drag";
 import { formatQuotedUserMessage } from "@/lib/user-message-quote";
 import { cn } from "@/lib/utils";
-import { composerMentionText } from "@/lib/composer-mention-text";
-import type { ComposerDraftStore } from "@/lib/composer-draft";
+import type { ComposerDraft, ComposerDraftStore } from "@/lib/composer-draft";
+import { useLocalPreferences } from "@/hooks/useLocalPreferences";
 
 const VOICE_SHORTCUT_CODE = "KeyD";
 const VOICE_SHORTCUT_ARIA = "Control+Shift+D";
@@ -149,8 +157,8 @@ type VoiceShortcutPlatform = "apple" | "chromeos" | "linux" | "other" | "windows
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function utf8Bytes(value: string): number {
@@ -240,6 +248,7 @@ interface ThreadComposerProps {
   onStop?: () => void;
   surfaceRef?: Ref<HTMLDivElement>;
   onTranscribeAudio?: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
+  onInspectAttachment?: (path: string) => Promise<LocalAttachment>;
   /** Sustained objective for this chat (WebSocket ``goal_state``). */
   goalState?: GoalStateWsPayload;
   workspaceScope?: WorkspaceScopePayload | null;
@@ -357,10 +366,21 @@ interface QueuedPrompt {
   sessionMentions?: SessionMention[];
   autoAfterTurnId?: string;
   autoPaused?: boolean;
+  autoSendPageId?: string;
+}
+
+let queuedPromptPageId: string | undefined;
+
+function getQueuedPromptPageId(): string {
+  return queuedPromptPageId ??= crypto.randomUUID();
+}
+
+function canAutoSendQueuedPrompt(prompt: QueuedPrompt): boolean {
+  return !prompt.autoPaused && prompt.autoSendPageId === getQueuedPromptPageId();
 }
 
 function pauseQueuedPrompt(prompt: QueuedPrompt): QueuedPrompt {
-  return { ...prompt, autoAfterTurnId: undefined, autoPaused: true };
+  return { ...prompt, autoAfterTurnId: undefined, autoSendPageId: undefined, autoPaused: true };
 }
 
 function mergeQueuedPrompt(first: QueuedPrompt, next: QueuedPrompt): QueuedPrompt {
@@ -379,20 +399,19 @@ function mergeQueuedPrompt(first: QueuedPrompt, next: QueuedPrompt): QueuedPromp
     sessionMentions: [...mentions.values()],
     autoAfterTurnId: first.autoAfterTurnId,
     autoPaused: prompts.some((prompt) => prompt.autoPaused),
+    autoSendPageId: first.autoSendPageId,
   };
 }
 
-function queuedAttachmentBytes(image: QueuedPromptImage): number {
-  const base64 = image.dataUrl.slice(image.dataUrl.indexOf(",") + 1);
+function queuedUploadBytes(image: QueuedPromptImage): number {
+  if (image.local) return 0;
+  const dataUrl = image.dataUrl ?? "";
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor(base64.length * 3 / 4) - padding;
 }
 
-interface QueuedPromptImage {
-  dataUrl: string;
-  name?: string;
-  kind?: AttachmentKind;
-}
+type QueuedPromptImage = RestoredReadyImage;
 
 interface CliAppMentionQuery {
   query: string;
@@ -430,7 +449,7 @@ function mentionInsertion(
   const to = Math.min(Math.max(end, from), value.length);
   const prefix = value.slice(0, from);
   const suffix = value.slice(to);
-  const leadingSpace = prefix && !/\s$/.test(prefix) ? " " : "";
+  const leadingSpace = prefix && !isCapabilityMentionStart(value, from) ? " " : "";
   const trailingSpace = /^\s/.test(suffix) ? "" : " ";
   const tokenStart = prefix.length + leadingSpace.length;
   const tokenEnd = tokenStart + name.length + 1;
@@ -539,13 +558,16 @@ function normalizeQueuedPrompt(item: unknown, index: number): QueuedPrompt | nul
   if (typeof record.text !== "string") return null;
   const text = record.text.trim();
   const images = Array.isArray(record.images)
-    ? record.images.flatMap((image) => {
+    ? record.images.flatMap((image): QueuedPromptImage[] => {
         if (!image || typeof image !== "object") return [];
         const candidate = image as Partial<QueuedPromptImage>;
+        if (isLocalAttachment(candidate.local)) {
+          return [{ local: candidate.local, kind: candidate.local.kind, name: candidate.local.name }];
+        }
         if (typeof candidate.dataUrl !== "string" || !candidate.dataUrl.startsWith("data:")) {
           return [];
         }
-        const kind = candidate.kind === "file" || candidate.kind === "image"
+        const kind = candidate.kind === "file" || candidate.kind === "image" || candidate.kind === "video"
           ? candidate.kind
           : candidate.dataUrl.startsWith("data:image/")
             ? "image"
@@ -567,7 +589,7 @@ function normalizeQueuedPrompt(item: unknown, index: number): QueuedPrompt | nul
   const id = typeof record.id === "string" && record.id.trim()
     ? record.id
     : `queued-prompt-restored-${index}`;
-  return {
+  const prompt: QueuedPrompt = {
     id,
     text,
     ...(images.length > 0 ? { images } : {}),
@@ -577,7 +599,9 @@ function normalizeQueuedPrompt(item: unknown, index: number): QueuedPrompt | nul
       ? { autoAfterTurnId: record.autoAfterTurnId.trim() }
       : {}),
     ...(record.autoPaused === true ? { autoPaused: true } : {}),
+    ...(typeof record.autoSendPageId === "string" ? { autoSendPageId: record.autoSendPageId } : {}),
   };
+  return canAutoSendQueuedPrompt(prompt) ? prompt : pauseQueuedPrompt(prompt);
 }
 
 function readQueuedPrompt(storageKey: string): QueuedPrompt | null {
@@ -689,11 +713,25 @@ function queuedPromptStoreFor(storageKey: string | null): QueuedPromptStore {
   return store;
 }
 
+function expireQueuedPromptAuthorization(): void {
+  queuedPromptPageId = undefined;
+  for (const store of queuedPromptStores.values()) {
+    store.set((prompt) => prompt && !prompt.autoPaused ? pauseQueuedPrompt(prompt) : prompt);
+  }
+}
+
+// Saved content survives a page's lifetime; permission to execute it does not.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", expireQueuedPromptAuthorization);
+  document.addEventListener("freeze", expireQueuedPromptAuthorization);
+}
+
 function readyImagesToQueuedImages(
-  images: Array<AttachedImage & { dataUrl: string }>,
+  images: AttachedImage[],
 ): QueuedPromptImage[] {
   return images.map((img) => ({
     dataUrl: img.dataUrl,
+    local: img.local,
     kind: img.kind,
     name: img.file.name,
   }));
@@ -701,17 +739,20 @@ function readyImagesToQueuedImages(
 
 function queuedImagesToSendImages(images?: QueuedPromptImage[]): SendAttachment[] | undefined {
   if (!images?.length) return undefined;
-  return images.map((img) => ({
-    media: {
-      data_url: img.dataUrl,
-      ...(img.name ? { name: img.name } : {}),
-    },
-    preview: {
-      kind: img.kind ?? (img.dataUrl.startsWith("data:image/") ? "image" : "file"),
-      url: img.dataUrl,
-      ...(img.name ? { name: img.name } : {}),
-    },
-  }));
+  return images.flatMap((img): SendAttachment[] => {
+    if (img.local) return [{
+      media: { path: img.local.path, name: img.local.name },
+      preview: { kind: img.local.kind, url: img.local.url, name: img.local.name },
+    }];
+    if (!img.dataUrl) return [];
+    return [{
+      media: { data_url: img.dataUrl, ...(img.name ? { name: img.name } : {}) },
+      preview: {
+        kind: img.kind ?? (img.dataUrl.startsWith("data:image/") ? "image" : img.dataUrl.startsWith("data:video/") ? "video" : "file"),
+        url: img.dataUrl, ...(img.name ? { name: img.name } : {}),
+      },
+    }];
+  });
 }
 
 function queuedPromptLabel(prompt: QueuedPrompt): string {
@@ -970,7 +1011,7 @@ function GoalStateStrip({
             id="nanobot-goal-panel-scroll"
             className="min-h-0 flex-1 overflow-y-auto scrollbar-thin px-3 pb-3 pt-2"
           >
-            <MarkdownText className="max-w-none text-[13.5px] leading-relaxed text-foreground/90">
+            <MarkdownText className="max-w-none text-foreground/90">
               {markdownBody}
             </MarkdownText>
           </div>
@@ -1020,6 +1061,20 @@ function GoalStateStrip({
   );
 }
 
+function autosizeTextarea(input: HTMLTextAreaElement) {
+  const container = input.parentElement!;
+  const previousMinHeight = container.style.minHeight;
+  // Measuring the one-row textarea must not expand the sibling transcript and
+  // clamp its native scroll offset, even temporarily before paint.
+  container.style.minHeight = `${container.getBoundingClientRect().height}px`;
+  try {
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 260)}px`;
+  } finally {
+    container.style.minHeight = previousMinHeight;
+  }
+}
+
 export function ThreadComposer({
   onSend,
   disabled,
@@ -1051,6 +1106,7 @@ export function ThreadComposer({
   onStop,
   surfaceRef,
   onTranscribeAudio,
+  onInspectAttachment,
   goalState,
   workspaceScope = null,
   workspaceControlsHidden = false,
@@ -1079,7 +1135,7 @@ export function ThreadComposer({
   const [value, setValue] = useState(initialDraft?.text ?? "");
   const [composerFocused, setComposerFocused] = useState(false);
   const blurFrame = useRef<number | null>(null);
-  const [selectedSessionMentions, setSelectedSessionMentions] = useState<SessionMention[]>(
+  const [boundSessionMentions, setBoundSessionMentions] = useState<SessionMention[]>(
     initialDraft?.sessionMentions ?? [],
   );
   const [sessionDragPreview, setSessionDragPreview] = useState<{
@@ -1089,6 +1145,14 @@ export function ThreadComposer({
   } | null>(null);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
+  const [pathInspection, setPathInspection] = useState<{
+    generation: number; scope: string; range: PastedPathRange; attachment?: LocalAttachment;
+  } | null>(null);
+  const pathCheckGeneration = useRef(0);
+  const pathCheckScope = useRef("");
+  const scopeIdentity = `${workspaceScope?.project_path ?? ""}:${workspaceScope?.access_mode ?? ""}`;
+  pathCheckScope.current = scopeIdentity;
+  useEffect(() => () => { pathCheckGeneration.current += 1; }, []);
   const [modelSetupAttentionRequest, setModelSetupAttentionRequest] = useState(0);
   const queuedPromptStorageKey = queuedPromptsStorageKey(pendingQueueKey);
   const queuedPromptStore = useMemo(() => queuedPromptStoreFor(queuedPromptStorageKey), [queuedPromptStorageKey]);
@@ -1110,6 +1174,7 @@ export function ThreadComposer({
   // Coarser than hasTouchPrimaryPointer on purpose: tablets with a physical
   // keyboard still get the newline-on-Enter behavior.
   const hasCoarsePointer = useMediaQuery("(pointer: coarse)");
+  const { readingTextSize } = useLocalPreferences();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mentionOverlayRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -1125,10 +1190,7 @@ export function ThreadComposer({
       previousWidth = width;
       setCompactControls(width <= 512);
       const input = textareaRef.current;
-      if (input) {
-        input.style.height = "auto";
-        input.style.height = `${Math.min(input.scrollHeight, 260)}px`;
-      }
+      if (input) autosizeTextarea(input);
     };
     update();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
@@ -1180,33 +1242,45 @@ export function ThreadComposer({
 
   const maxAttachments = ingressLimits?.attachments.max_count
     ?? MAX_ATTACHMENTS_PER_MESSAGE;
+  const maxFileBytes = ingressLimits?.attachments.max_file_bytes ?? MAX_ATTACHMENT_BYTES;
   const maxTextBytes = ingressLimits?.message.max_text_bytes ?? 64 * 1024;
-  const { images, enqueue, remove, clear, restoreReadyImages, encoding, full } =
+  const { images, enqueue, addLocal, remove, clear, restoreReadyImages, encoding: encodingFiles, full } =
     useAttachedImages({ ingressLimits });
+  const encoding = encodingFiles || pathInspection !== null;
   const restoredDraftAttachments = useRef(false);
-  const [draftAttachmentsReady, setDraftAttachmentsReady] = useState(!initialDraft?.files.length);
+  const [draftAttachmentsReady, setDraftAttachmentsReady] = useState(!initialDraft?.attachments.length);
   useLayoutEffect(() => {
     if (restoredDraftAttachments.current) return;
     restoredDraftAttachments.current = true;
-    if (initialDraft?.files.length) enqueue(initialDraft.files, { restoringDraft: true });
+    for (const attachment of initialDraft?.attachments ?? []) {
+      if (attachment instanceof File) enqueue([attachment], { restoringDraft: true });
+      else addLocal(attachment, { restoringDraft: true });
+    }
     setDraftAttachmentsReady(true);
-  }, [enqueue, initialDraft]);
+  }, [enqueue, addLocal, initialDraft]);
 
   const formatRejection = useCallback(
-    (reason: AttachmentError): string => {
+    (reason: Exclude<AttachmentError, "too_large">): string => {
       const key = `thread.composer.imageRejected.${reason}`;
-      const fallback = reason === "too_many_attachments"
+      const fallback = reason === "too_many_videos"
+        ? "Max 1 video per message"
+        : reason === "too_many_attachments"
         ? `Max ${maxAttachments} attachments per message`
         : reason === "empty_file"
           ? "Empty files cannot be attached"
           : reason === "total_too_large"
             ? "Attachments are too large together — remove some or use smaller files"
-            : reason === "too_large"
-              ? "File is too large"
-              : "Unsupported file type";
+            : "Unsupported file type";
       return t(key, { max: maxAttachments, defaultValue: fallback });
     },
     [maxAttachments, t],
+  );
+
+  const formatUploadTooLarge = useCallback(
+    (size: number, maximum: number) => t("thread.composer.imageRejected.too_large", {
+      size: formatBytes(size), max: formatBytes(maximum),
+    }),
+    [t],
   );
 
   const textTooLargeMessage = useCallback(
@@ -1223,17 +1297,20 @@ export function ThreadComposer({
       secondEnterPromptIdRef.current = null;
       const { rejected } = enqueue(files);
       if (rejected.length > 0) {
-        setInlineError(formatRejection(rejected[0].reason));
+        const { reason, file } = rejected[0];
+        setInlineError(reason === "too_large"
+          ? formatUploadTooLarge(file.size, acceptedAttachmentKind(file) === "video" ? MAX_VIDEO_BYTES : maxFileBytes)
+          : formatRejection(reason));
       } else {
         setInlineError(null);
       }
     },
-    [enqueue, formatRejection, interactionDisabled],
+    [enqueue, formatRejection, formatUploadTooLarge, interactionDisabled, maxFileBytes],
   );
 
   const {
     isDragging,
-    onPaste,
+    onPaste: onAttachmentPaste,
     onDragEnter,
     onDragOver,
     onDragLeave,
@@ -1263,8 +1340,8 @@ export function ThreadComposer({
   const normalizedQuotedContext = quotedContext?.trim() || null;
 
   const readyImages = useMemo(
-    () => images.filter((img): img is AttachedImage & { dataUrl: string } =>
-      img.status === "ready" && typeof img.dataUrl === "string",
+    () => images.filter((img) =>
+      img.status === "ready" && (typeof img.dataUrl === "string" || !!img.local),
     ),
     [images],
   );
@@ -1447,12 +1524,12 @@ export function ThreadComposer({
     if (interactionDisabled || cliAppMenuDismissed) return null;
     const caret = Math.min(Math.max(cursorPosition, 0), value.length);
     const beforeCaret = value.slice(0, caret);
-    const match = /(?:^|\s)@([\p{L}\p{N}_-]*)$/iu.exec(beforeCaret);
-    if (!match) return null;
+    const match = /@([\p{L}\p{N}_-]*)$/iu.exec(beforeCaret);
+    if (!match || !isCapabilityMentionStart(value, match.index)) return null;
     const query = match[1].toLowerCase();
     return {
       query,
-      start: caret - query.length - 1,
+      start: match.index,
       end: caret,
     };
   }, [cliAppMenuDismissed, cursorPosition, interactionDisabled, value]);
@@ -1466,9 +1543,13 @@ export function ThreadComposer({
     () => sessionMentionOptions(sessions),
     [sessions],
   );
+  const sessionMentionCatalog = useMemo(
+    () => [...availableSessionMentions, ...boundSessionMentions],
+    [availableSessionMentions, boundSessionMentions],
+  );
   const mentionSegments = useMemo(
-    () => splitCapabilityMentionSegments(value, cliApps, mcpPresets, selectedSessionMentions),
-    [cliApps, mcpPresets, selectedSessionMentions, value],
+    () => splitCapabilityMentionSegments(value, cliApps, mcpPresets, sessionMentionCatalog),
+    [cliApps, mcpPresets, sessionMentionCatalog, value],
   );
   const editMentionInput = useCallback((next: string, cursor: number) => {
     secondEnterPromptIdRef.current = null;
@@ -1484,20 +1565,50 @@ export function ThreadComposer({
     resetKey: pendingQueueKey,
   });
   const { rawSelection, replace: replaceMentionInput } = mentionInput;
-  const draftText = composerMentionText(mentionInput.segments).raw;
+  const onPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    onAttachmentPaste(event);
+    if (event.defaultPrevented || interactionDisabled || !onInspectAttachment) return;
+    const raw = event.clipboardData.getData("text/plain");
+    const path = pastedFilePath(raw);
+    if (!path) return;
+    event.preventDefault();
+    const { start, end } = rawSelection();
+    const pasted = value.slice(0, start) + raw + value.slice(end);
+    const generation = ++pathCheckGeneration.current;
+    replaceMentionInput(pasted, start + raw.length);
+    setPathInspection({ generation, scope: scopeIdentity, range: new PastedPathRange(pasted, start, start + raw.length) });
+    void onInspectAttachment(path).then((attachment) => {
+      if (generation !== pathCheckGeneration.current) return;
+      setPathInspection((current) => current?.generation === generation ? { ...current, attachment } : current);
+    }).catch((error: unknown) => {
+      if (generation !== pathCheckGeneration.current || pathCheckScope.current !== scopeIdentity) return;
+      setInlineError(error instanceof Error ? error.message : t("message.attachmentUnavailable"));
+      setPathInspection(null);
+    });
+  }, [interactionDisabled, onAttachmentPaste, onInspectAttachment, rawSelection, replaceMentionInput, scopeIdentity, t, value]);
+
   useLayoutEffect(() => {
-    if (!draftKey || !draftStore || !draftAttachmentsReady) return;
-    if (!draftText && images.length === 0 && !quotedContext) {
-      draftStore.delete(draftKey);
+    if (!pathInspection) return;
+    if (pathInspection.scope !== scopeIdentity || !pathInspection.range.update(value)) {
+      pathCheckGeneration.current += 1;
+      setPathInspection(null);
       return;
     }
-    draftStore.set(draftKey, {
-      text: draftText,
-      files: images.map((image) => image.file),
-      sessionMentions: selectedSessionMentions,
-      quotedContext,
-    }, persistDraft);
-  }, [draftAttachmentsReady, draftKey, draftStore, images, persistDraft, quotedContext, selectedSessionMentions, draftText]);
+    // Let the native IME commit before removing the confirmed path from its text.
+    if (!pathInspection.attachment || mentionInput.isComposing) return;
+    const edited = pathInspection.range.replace("", rawSelection().start);
+    if (edited) {
+      const rejection = addLocal(pathInspection.attachment);
+      if (rejection) setInlineError(formatRejection(rejection));
+      else {
+        replaceMentionInput(edited.value, edited.cursor, { preserveFocus: true });
+        setInlineError(null);
+      }
+    }
+    setPathInspection(null);
+  }, [addLocal, formatRejection, mentionInput.isComposing, pathInspection, rawSelection, replaceMentionInput, scopeIdentity, value]);
+
+  const draftText = composerMentionText(mentionInput.segments).raw;
   const sessionDragInsertion = sessionDragPreview
     ? mentionInsertion(
         value,
@@ -1511,7 +1622,7 @@ export function ThreadComposer({
         sessionDragInsertion.value,
         cliApps,
         mcpPresets,
-        [...selectedSessionMentions, sessionDragPreview.mention],
+        sessionMentionCatalog,
       )
     : mentionInput.segments;
   const activeSessionMentions = useMemo(() => {
@@ -1522,15 +1633,39 @@ export function ThreadComposer({
       return [segment.mention];
     });
   }, [mentionSegments]);
+  useLayoutEffect(() => {
+    // Pin resolved identities so a catalog refresh cannot retarget an existing reference.
+    if (activeSessionMentions.length !== boundSessionMentions.length
+      || activeSessionMentions.some((mention, index) => mention !== boundSessionMentions[index])) {
+      setBoundSessionMentions(activeSessionMentions);
+    }
+  }, [activeSessionMentions, boundSessionMentions]);
+  useLayoutEffect(() => {
+    if (!draftKey || !draftStore || !draftAttachmentsReady) return;
+    if (!draftText && images.length === 0 && !quotedContext) {
+      draftStore.delete(draftKey);
+      return;
+    }
+    draftStore.set(draftKey, {
+      text: draftText,
+      attachments: images.flatMap((image): ComposerDraft["attachments"] => (
+        image.local ? [image.local] : image.file instanceof File ? [image.file] : []
+      )),
+      sessionMentions: activeSessionMentions,
+      quotedContext,
+    }, persistDraft);
+  }, [activeSessionMentions, draftAttachmentsReady, draftKey, draftStore, images, persistDraft, quotedContext, draftText]);
+  const insertableSessionMentions = useMemo(() => availableSessionMentions.filter((mention) => {
+    const bound = activeSessionMentions.find(
+      (active) => active.name.toLowerCase() === mention.name.toLowerCase(),
+    );
+    return (!bound || bound.session_key === mention.session_key)
+      && (activeSessionMentions.length < SESSION_MENTIONS_LIMIT
+        || activeSessionMentions.some((active) => active.session_key === mention.session_key));
+  }), [activeSessionMentions, availableSessionMentions]);
   const filteredMentionCandidates = useMemo<MentionCandidate[]>(() => {
     if (!cliAppMention) return [];
-    const sessionCandidates: MentionCandidate[] = availableSessionMentions
-      .filter((mention) => (
-        activeSessionMentions.length < SESSION_MENTIONS_LIMIT
-        || activeSessionMentions.some(
-          (selected) => selected.session_key === mention.session_key,
-        )
-      ))
+    const sessionCandidates: MentionCandidate[] = insertableSessionMentions
       .filter((mention) => [
         mention.name,
         mention.title,
@@ -1542,7 +1677,7 @@ export function ThreadComposer({
         mention,
       }));
     const sessionNames = new Set(
-      availableSessionMentions.map((mention) => mention.name.toLowerCase()),
+      sessionMentionCatalog.map((mention) => mention.name.toLowerCase()),
     );
     const cliCandidates: MentionCandidate[] = cliApps
       .filter((app) => app.installed)
@@ -1603,7 +1738,7 @@ export function ThreadComposer({
       remaining -= extra;
     }
     return groups.flatMap(({ candidates }, index) => candidates.slice(0, counts[index]));
-  }, [activeSessionMentions, availableSessionMentions, cliAppMention, cliApps, mcpPresets]);
+  }, [cliAppMention, cliApps, insertableSessionMentions, mcpPresets, sessionMentionCatalog]);
 
   const showCliAppMenu = filteredMentionCandidates.length > 0;
   const showAnyPalette = showSlashMenu || showCliAppMenu;
@@ -1717,23 +1852,22 @@ export function ThreadComposer({
     };
   }, [filteredMentionCandidates.length, filteredSlashCommands.length, showAnyPalette]);
 
-  const resizeTextarea = useCallback((restoreFocus = true) => {
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
-      if (restoreFocus) el.focus();
-    });
+  const focusTextarea = useCallback(() => {
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el || mentionInput.isComposing) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+    autosizeTextarea(el);
     if (mentionOverlayRef.current) mentionOverlayRef.current.scrollTop = el.scrollTop;
   }, [compactControls, mentionInput.isComposing, mentionInput.value]);
+
+  useEffect(() => {
+    // The parent projects typography tokens in its layout effect; measure after it.
+    const input = textareaRef.current;
+    if (input) autosizeTextarea(input);
+  }, [readingTextSize]);
 
   // Runs before paint so switching sessions never flashes stale draft text.
   useLayoutEffect(() => {
@@ -1741,18 +1875,11 @@ export function ThreadComposer({
     previousPendingQueueKeyRef.current = pendingQueueKey;
     secondEnterPromptIdRef.current = null;
     setValue("");
-    setSelectedSessionMentions([]);
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
     setCursorPosition(0);
     clear();
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
-    });
   }, [clear, pendingQueueKey]);
 
   const appendTranscription = useCallback((text: string) => {
@@ -1767,8 +1894,8 @@ export function ThreadComposer({
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
     setInlineError(null);
-    resizeTextarea();
-  }, [resizeTextarea]);
+    focusTextarea();
+  }, [focusTextarea]);
 
   const clearVoiceErrorTimers = useCallback(() => {
     if (voiceErrorFadeTimerRef.current !== null) clearTimeout(voiceErrorFadeTimerRef.current);
@@ -1851,7 +1978,7 @@ export function ThreadComposer({
         setSlashMenuDismissed(true);
         setCliAppMenuDismissed(false);
         setInlineError(null);
-        resizeTextarea();
+        focusTextarea();
         return;
       }
 
@@ -1874,43 +2001,29 @@ export function ThreadComposer({
       setSlashMenuDismissed(true);
       setCliAppMenuDismissed(false);
       setInlineError(null);
-      resizeTextarea();
+      focusTextarea();
     },
-    [handleStop, isStreaming, onStop, recentSlashCommands, replaceMentionInput, resizeTextarea, skillQuery, value],
+    [handleStop, isStreaming, onStop, recentSlashCommands, replaceMentionInput, focusTextarea, skillQuery, value],
   );
 
-  const insertMentionCandidate = useCallback(
-    (candidate: MentionCandidate, start: number, end: number) => {
-      if (candidate.kind === "session") {
-        const alreadySelected = activeSessionMentions.some(
-          (mention) => mention.session_key === candidate.mention.session_key,
-        );
-        if (!alreadySelected && activeSessionMentions.length >= SESSION_MENTIONS_LIMIT) return;
-        const name = candidate.name.toLowerCase();
-        setSelectedSessionMentions([
-          ...activeSessionMentions.filter((mention) => (
-            mention.name.toLowerCase() !== name
-            && mention.session_key !== candidate.mention.session_key
-          )),
-          candidate.mention,
-        ]);
-      }
-      const insertion = mentionInsertion(value, candidate.name, start, end);
+  const insertMention = useCallback(
+    (name: string, start: number, end: number) => {
+      const insertion = mentionInsertion(value, name, start, end);
       replaceMentionInput(insertion.value, insertion.cursor);
       setCliAppMenuDismissed(true);
       setSlashMenuDismissed(false);
       setInlineError(null);
-      resizeTextarea();
+      focusTextarea();
     },
-    [activeSessionMentions, replaceMentionInput, resizeTextarea, value],
+    [replaceMentionInput, focusTextarea, value],
   );
 
   const chooseMentionCandidate = useCallback(
     (candidate: MentionCandidate) => {
       if (!cliAppMention) return;
-      insertMentionCandidate(candidate, cliAppMention.start, cliAppMention.end);
+      insertMention(candidate.name, cliAppMention.start, cliAppMention.end);
     },
-    [cliAppMention, insertMentionCandidate],
+    [cliAppMention, insertMention],
   );
 
   const handleSessionDrop = useCallback((event: React.DragEvent) => {
@@ -1921,30 +2034,14 @@ export function ThreadComposer({
     setSessionDragPreview(null);
     if (interactionDisabled) return true;
     const sessionKey = readDraggedSession(event.dataTransfer);
-    const mention = availableSessionMentions.find(
+    const mention = insertableSessionMentions.find(
       (candidate) => candidate.session_key === (sessionKey ?? preview?.mention.session_key),
     );
     if (!mention) return true;
     const caret = preview?.start ?? rawSelection().start;
-    insertMentionCandidate(
-      {
-        kind: "session",
-        name: mention.name,
-        displayName: mention.title || mention.name,
-        mention,
-      },
-      caret,
-      preview?.end ?? rawSelection().end,
-    );
+    insertMention(mention.name, caret, preview?.end ?? rawSelection().end);
     return true;
-  }, [
-    availableSessionMentions,
-    insertMentionCandidate,
-    interactionDisabled,
-    rawSelection,
-    sessionDragPreview,
-    value.length,
-  ]);
+  }, [insertableSessionMentions, insertMention, interactionDisabled, rawSelection, sessionDragPreview]);
 
   const previewSessionDrop = useCallback((event: React.DragEvent) => {
     if (!hasDraggedSession(event.dataTransfer)) return false;
@@ -1954,13 +2051,10 @@ export function ThreadComposer({
       return true;
     }
     const sessionKey = readDraggedSession(event.dataTransfer);
-    const mention = availableSessionMentions.find(
+    const mention = insertableSessionMentions.find(
       (candidate) => candidate.session_key === sessionKey,
     );
-    const alreadySelected = mention && activeSessionMentions.some(
-      (candidate) => candidate.session_key === mention.session_key,
-    );
-    if (!mention || (!alreadySelected && activeSessionMentions.length >= SESSION_MENTIONS_LIMIT)) {
+    if (!mention) {
       event.dataTransfer.dropEffect = "none";
       setSessionDragPreview(null);
       return true;
@@ -1976,7 +2070,7 @@ export function ThreadComposer({
         : { mention, start, end }
     ));
     return true;
-  }, [activeSessionMentions, availableSessionMentions, interactionDisabled, rawSelection]);
+  }, [insertableSessionMentions, interactionDisabled, rawSelection]);
 
   useEffect(() => {
     if (!sessionDragPreview) return;
@@ -1990,38 +2084,41 @@ export function ThreadComposer({
 
   const clearComposerText = useCallback((restoreFocus = true) => {
     setValue("");
-    setSelectedSessionMentions([]);
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
     setCursorPosition(0);
-    resizeTextarea(restoreFocus);
-  }, [resizeTextarea]);
+    if (restoreFocus) focusTextarea();
+  }, [focusTextarea]);
 
   const queuedPromptError = useCallback((prompt: QueuedPrompt): string | null => {
     if (utf8Bytes(formatQuotedUserMessage(prompt.text, prompt.quotedContext)) > maxTextBytes) {
       return textTooLargeMessage();
     }
     const attachments = prompt.images ?? [];
-    if (attachments.length > maxAttachments) return formatRejection("too_many_attachments");
-    const sizes = attachments.map(queuedAttachmentBytes);
-    if (sizes.some((size) => size > (ingressLimits?.attachments.max_file_bytes ?? MAX_ATTACHMENT_BYTES))) {
-      return formatRejection("too_large");
+    const videos = attachments.filter((item) => item.kind === "video").length;
+    if (videos > MAX_VIDEOS_PER_MESSAGE) return formatRejection("too_many_videos");
+    if (attachments.length - videos > maxAttachments) return formatRejection("too_many_attachments");
+    const oversized = attachments.find((item) => queuedUploadBytes(item) > (item.kind === "video" ? MAX_VIDEO_BYTES : maxFileBytes));
+    if (oversized) {
+      return formatUploadTooLarge(queuedUploadBytes(oversized), oversized.kind === "video" ? MAX_VIDEO_BYTES : maxFileBytes);
     }
-    if (sizes.reduce((sum, size) => sum + size, 0) > (ingressLimits?.attachments.max_total_bytes ?? MAX_TOTAL_ATTACHMENT_BYTES)) {
+    const total = attachments.reduce((sum, item) => sum + (item.kind === "video" ? 0 : queuedUploadBytes(item)), 0);
+    if (total > (ingressLimits?.attachments.max_total_bytes ?? MAX_TOTAL_ATTACHMENT_BYTES)) {
       return formatRejection("total_too_large");
     }
     if ((prompt.sessionMentions?.length ?? 0) > SESSION_MENTIONS_LIMIT) {
       return t("thread.composer.queued.tooManyMentions", { max: SESSION_MENTIONS_LIMIT });
     }
     return null;
-  }, [formatRejection, ingressLimits, maxAttachments, maxTextBytes, t, textTooLargeMessage]);
+  }, [formatRejection, formatUploadTooLarge, ingressLimits, maxAttachments, maxFileBytes, maxTextBytes, t, textTooLargeMessage]);
 
   const collectGuidancePrompt = useCallback((): QueuedPrompt => {
     queuedPromptCounterRef.current += 1;
     const prompt: QueuedPrompt = {
       id: `queued-prompt-${Date.now()}-${queuedPromptCounterRef.current}`,
       text: value.trim(),
+      autoSendPageId: getQueuedPromptPageId(),
       images: readyImagesToQueuedImages(readyImages),
       ...(activeTurnId ? { autoAfterTurnId: activeTurnId } : {}),
       ...(normalizedQuotedContext ? { quotedContext: normalizedQuotedContext } : {}),
@@ -2056,7 +2153,7 @@ export function ThreadComposer({
     secondEnterPromptIdRef.current = null;
     setQueuedPrompt(null);
     replaceMentionInput(prompt.text, prompt.text.length);
-    setSelectedSessionMentions(prompt.sessionMentions ?? []);
+    setBoundSessionMentions(prompt.sessionMentions ?? []);
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
@@ -2066,8 +2163,8 @@ export function ThreadComposer({
     } else {
       clear();
     }
-    resizeTextarea();
-  }, [clear, collectGuidancePrompt, hasComposerContent, normalizedQuotedContext, onQuotedContextChange, replaceMentionInput, resizeTextarea, restoreReadyImages, setQueuedPrompt]);
+    focusTextarea();
+  }, [clear, collectGuidancePrompt, hasComposerContent, normalizedQuotedContext, onQuotedContextChange, replaceMentionInput, focusTextarea, restoreReadyImages, setQueuedPrompt]);
 
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt, extraOptions?: SendOptions) => {
@@ -2107,7 +2204,7 @@ export function ThreadComposer({
     if (!isStreaming) secondEnterPromptIdRef.current = null;
     // Switching to an idle session is not completion of the previous session's run.
     if (previous.key !== pendingQueueKey) return;
-    if (isStreaming || interactionDisabled || !queuedPrompt || queuedPrompt.autoPaused) return;
+    if (isStreaming || interactionDisabled || !queuedPrompt || !canAutoSendQueuedPrompt(queuedPrompt)) return;
     const waitingTurnCompleted = queuedPromptStorageKey !== null && queuedPrompt.autoAfterTurnId !== undefined
       ? completedTurnIds.includes(queuedPrompt.autoAfterTurnId)
       : previous.isStreaming;
@@ -2131,16 +2228,7 @@ export function ThreadComposer({
     }
     // Keep self-contained local previews across drafts and optimistic bubbles.
     // The client decodes these to HTTP binary; WS messages contain only refs.
-    const payload: SendAttachment[] | undefined =
-      readyImages.length > 0
-        ? readyImages.map((img) => ({
-            media: {
-              data_url: img.dataUrl,
-              name: img.file.name,
-            },
-            preview: { kind: img.kind, url: img.dataUrl, name: img.file.name },
-          }))
-        : undefined;
+    const payload = queuedImagesToSendImages(readyImagesToQueuedImages(readyImages));
     const attachedCliApps = activeCliMentionApps.map(cliAppMentionPayload);
     const attachedMcpPresets = activeMcpPresetMentions.map(mcpPresetMentionPayload);
     const options: SendOptions | undefined =
@@ -2350,13 +2438,6 @@ export function ThreadComposer({
     }
   };
 
-  const onInput: React.FormEventHandler<HTMLTextAreaElement> = (e) => {
-    if ((e.nativeEvent as InputEvent).isComposing) return;
-    const el = e.currentTarget;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
-  };
-
   const onFilePick: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
@@ -2489,15 +2570,15 @@ export function ThreadComposer({
   ) : null;
   const inputTextClasses = cn(
     // Keep the overlay's CJK/Latin spacing aligned with the native textarea caret.
-    "w-full resize-none bg-transparent [text-autospace:no-autospace]",
+    "w-full resize-none bg-transparent text-composer [text-autospace:no-autospace]",
     compactControls
-      ? "min-h-[52px] px-4 pb-2 pt-3 text-[16px] leading-6"
+      ? "min-h-[52px] px-4 pb-2 pt-3"
       : isHero
         ? cn(
-            "min-h-[78px] px-4 text-[16px] leading-6 sm:px-5",
+            "min-h-[78px] px-4 sm:px-5",
             relaxedHeroInput ? "pb-2 pt-[27px]" : "pb-1.5 pt-4",
           )
-        : "min-h-[50px] px-3.5 pb-1.5 pt-3 text-[16px] leading-5 sm:px-4",
+        : "min-h-[50px] px-3.5 pb-1.5 pt-3 sm:px-4",
   );
   const paletteBeside = showAnyPalette && slashPaletteLayout.placement === "beside";
 
@@ -2578,8 +2659,8 @@ export function ThreadComposer({
           "thread-composer-surface group/composer relative mx-auto flex w-full flex-col overflow-visible transition-all duration-200",
           paletteBeside && "col-start-1 row-start-1",
           isHero
-            ? "max-w-[58rem] rounded-prominent bg-muted/80 focus-within:bg-muted dark:bg-card dark:focus-within:bg-white/[0.06]"
-            : "max-w-[49.5rem] rounded-panel bg-muted/80 focus-within:bg-muted dark:bg-card dark:focus-within:bg-white/[0.06]",
+            ? "max-w-[var(--composer-content-width,58rem)] rounded-prominent bg-muted/80 focus-within:bg-muted dark:bg-card dark:focus-within:bg-white/[0.06]"
+            : "max-w-[var(--composer-content-width,49.5rem)] rounded-panel bg-muted/80 focus-within:bg-muted dark:bg-card dark:focus-within:bg-white/[0.06]",
           compactWhenIdle && "thread-composer-collapsible transition-colors motion-reduce:transition-none",
           interactionDisabled && "opacity-60",
           sessionDragPreview && "ring-1 ring-primary/25",
@@ -2619,7 +2700,9 @@ export function ThreadComposer({
                     current: formatBytes(current),
                   })
                 }
-                formatError={formatRejection}
+                formatError={(reason) => reason === "too_large"
+                  ? formatUploadTooLarge(img.file.size, img.kind === "video" ? MAX_VIDEO_BYTES : maxFileBytes)
+                  : formatRejection(reason)}
                 onRemove={() => removeChip(img.id)}
                 onKeyDown={onChipKey(img.id)}
                 registerRef={(el) => {
@@ -2636,7 +2719,7 @@ export function ThreadComposer({
             aria-label={t("thread.composer.quotedContext")}
           >
             <Quote className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-            <p className="line-clamp-2 min-w-0 flex-1 text-[13px]/[1.45]">
+            <p className="line-clamp-2 min-w-0 flex-1 text-reading-small">
               {normalizedQuotedContext}
             </p>
             <button
@@ -2678,7 +2761,6 @@ export function ThreadComposer({
             onBlur={() => {
               secondEnterPromptIdRef.current = null;
             }}
-            onInput={onInput}
             onKeyDown={onKeyDown}
             onKeyUp={() => setCursorPosition(rawSelection().start)}
             onSelect={() => setCursorPosition(rawSelection().start)}
@@ -3386,6 +3468,8 @@ function AttachmentChip({
           <div className="flex h-full w-full items-center justify-center">
             {image.kind === "image" ? (
               <ImageIcon className="h-4 w-4 text-muted-foreground" aria-hidden />
+            ) : image.kind === "video" ? (
+              <Video className="h-4 w-4 text-muted-foreground" aria-hidden />
             ) : (
               <FileText className="h-4 w-4 text-muted-foreground" aria-hidden />
             )}
