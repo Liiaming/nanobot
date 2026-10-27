@@ -91,6 +91,8 @@ The sidebar is the topic switcher. Each topic keeps its own history, title, work
 
 Drag topics within a sidebar group to reorder them. **Rename** edits a topic title in place; a failed save keeps the draft for retry.
 
+Use **Select** in a topic's action menu to archive or delete several topics with one confirmation. Click outside the topic rows and toolbar, or press **Esc**, to leave selection mode. Cancelling a confirmation keeps your selection. Archiving removes pins and hides topics from the default list while keeping their conversations. Use **Show archived** to find them again; selecting only archived topics offers **Unarchive**.
+
 ### Conversation groups and panes
 
 Open a topic's sidebar action menu and choose **Create group** to turn it into a conversation group. Use **Add pane** in the workbench header to start another topic alongside it. A group holds up to four panes. To bring in an existing topic, drag it onto the group or use **Move to** in its action menu.
@@ -131,13 +133,17 @@ File previews follow the active topic's access mode. Restricted workspace access
 
 ### Model failures
 
+If a model stream fails after producing reply text, the text is retained for reading and follow-up questions. A reply can look complete even when the request ended with a connection error.
+
 After a model request fails and automatic retries stop, the WebUI shows the failure category. Use **Continue** to resume from the saved conversation, or open model settings to change the model or correct its authorization. Review completed work before continuing: saved tool results are retained, but the model can choose to call tools again. Continuing does not resend the original message. Sending a new message or dismissing the notice clears the pending decision. Saved recovery decisions remain available after a refresh or gateway restart; temporary chats still follow their normal lifetime.
 
 ### Delegated work
 
-When nanobot delegates work to subagents, a work group appears under the request that started it. Progress continues to update after the main reply finishes. Completed tasks stay available for inspection, and refreshing or reopening the WebUI restores saved progress and results without restarting the work.
+When nanobot delegates work to subagents, **Subtasks** appears above the message input while tasks are queued, running, or stopping. It stays within reach as the conversation scrolls, even after the main reply finishes or you send another message. Open it for live activity; on narrow screens it opens from the bottom. The task list scrolls independently of the conversation.
 
-Work groups follow the browser's **Activity details** preference: **Auto** opens running work and folds it when all tasks finish; **Expanded** keeps it open by default. You can also expand or fold a group manually to check individual outcomes, including failures and partial results.
+Finished tasks leave the live list when it is closed. If you are already reading the list, they remain until you close it. When all tasks finish with the list closed, a brief completion or failure summary appears and then disappears; focusing or hovering over it keeps it available.
+
+Saved results appear as compact, expandable records beside the requests that started the work, and scroll with the conversation. Tasks without a matching request in the displayed history remain under **Other tasks**. Refreshing or reopening the WebUI restores active work in the fixed entry and finished work in the conversation, without restarting tasks or bringing all old tasks back into the live list.
 
 Select a task for its read-only conversation and tool activity. Closing the details leaves it running; its stop button cancels only that task. Give follow-up instructions to nanobot in the main conversation.
 
@@ -180,6 +186,8 @@ In Restricted mode, ordinary file and shell work stays inside the selected proje
 ## Composer
 
 The composer supports text, attachments (images, documents, and videos), slash commands and `@` mentions. With voice transcription configured, the empty composer offers voice input; transcription is added to the draft before sending.
+
+Start a message with `!` to run a Shell command directly in the topic's workspace, without calling the model (for example, `!git status`). Multiline commands are supported; remove attachments and quoted text before running a command. Commands run immediately, separately from waiting messages, and use the topic's existing permissions and Shell limits.
 
 Images appear as thumbnails above the draft. Hover over a thumbnail for its filename and size; use its top-right × to remove it before sending. Documents and videos keep their file cards, and attachment errors remain visible.
 
