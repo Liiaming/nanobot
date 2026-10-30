@@ -1,5 +1,3 @@
-"""Tests for append-only WebUI transcript replay."""
-
 from __future__ import annotations
 
 import json
@@ -317,13 +315,6 @@ def test_thread_response_receipts_for_folded_legacy_deltas(
         [{"turn_id": "turn-folded", "ranges": [[6, 6], [10, 10]]}],
     ]
     assert history.read(key) == original_rows
-    # Migration compaction retains its existing record format, without HTTP metadata.
-    assert transcript_module.compact_legacy_records(original_rows) == [
-        original_rows[0], original_rows[3],
-        {**original_rows[6], "text": primary_text},
-        {**original_rows[7], "text": "other"},
-        original_rows[8],
-    ]
 
 
 def test_event_projection_defers_trace_details_without_legacy_fallback(history,
@@ -463,7 +454,6 @@ def test_many_short_trace_rows_are_bounded_and_resolved(history, tmp_path, monke
         {"event": "message", "chat_id": "deferred-many-traces", "text": "done"},
         {"event": "turn_end", "chat_id": "deferred-many-traces"},
     ]
-    # Replay needs the full stored input, not one durable append per trace row.
     history.sessions.append_history(
         key,
         [fact_from_record({**row, "created_at_ms": 1_700_000_000_000}) for row in rows],

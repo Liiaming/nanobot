@@ -1555,7 +1555,6 @@ describe("ThreadShell", () => {
     expect(client.sendSystemCommand).not.toHaveBeenCalled();
     emit("notice-a", true);
     expect(notice()).not.toBeInTheDocument();
-    // A new turn can notify again; it does not inherit the previous dismissal.
     emit("notice-a", false);
     emit("notice-a", true);
     expect(notice()).toBeVisible();
@@ -5157,7 +5156,6 @@ describe("ThreadShell", () => {
       ),
     );
 
-    // No banner yet: only appears once the client emits a matching error.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
     await act(async () => {});
@@ -5724,7 +5722,7 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("option", { name: /Other project/i })).toBeInTheDocument();
   });
 
-  it("allows project selection before first input and locks it after acceptance without duplicating the sidebar label", async () => {
+  it.each([true, undefined])("locks saved topics with projectLocked=%s independently of displayed history", async (projectLocked) => {
     const client = makeClient();
     const scope = { project_path: "/srv/alpha", project_name: "alpha", access_mode: "restricted" as const };
     const props = {
@@ -5736,7 +5734,7 @@ describe("ThreadShell", () => {
     expect(await screen.findByRole("button", { name: "Switch directory" })).toBeEnabled();
     expect(screen.getByTestId("thread-header")).not.toHaveTextContent("alpha");
 
-    rerender(wrap(client, <ThreadShell {...props} session={{ ...session("project-chat"), projectLocked: true }} />));
+    rerender(wrap(client, <ThreadShell {...props} session={{ ...session("project-chat"), projectLocked }} />));
     expect(screen.queryByRole("button", { name: "Switch directory" })).not.toBeInTheDocument();
     expect(screen.getByTestId("thread-header")).not.toHaveTextContent("alpha");
     expect(screen.getByRole("button", { name: "Workspace access mode: Default Permission" })).toBeEnabled();

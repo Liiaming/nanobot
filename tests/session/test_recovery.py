@@ -23,15 +23,6 @@ from nanobot.webui import history as history_module
 from nanobot.webui.recovery import RecoveryActionError, RecoveryCoordinator
 
 
-@pytest.fixture(autouse=True)
-def _isolate_webui_transcripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Recovery scans must discover only test-owned transcripts, not active user chats."""
-    webui_dir = tmp_path / "isolated-webui"
-    webui_dir.mkdir()
-    monkeypatch.setattr(history_module, "get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr(history_module, "get_webui_dir", lambda: webui_dir)
-
-
 def _persist(manager: SessionManager, session: Session) -> None:
     session.metadata["webui"] = True
     manager.save(session)
@@ -63,7 +54,6 @@ async def test_restart_before_model_call_waits_for_confirmation(tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_stale_incomplete_transcript_waits_for_confirmation(tmp_path: Path, monkeypatch) -> None:
-    """A materialized shutdown must not reappear as an endless Working state."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     _persist(sessions, session)
@@ -89,7 +79,6 @@ async def test_materialized_interruption_can_continue_from_saved_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Older shutdowns may have cleared the checkpoint after saving partial history."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     session.messages.extend(
@@ -128,25 +117,19 @@ async def test_materialized_interruption_can_continue_from_saved_context(
 @pytest.mark.asyncio
 async def test_transcript_only_interruption_is_discovered_without_materializing_completed_history(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    webui_dir = tmp_path / "webui"
-    webui_dir.mkdir()
-    monkeypatch.setattr(history_module, "get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr(history_module, "get_webui_dir", lambda: webui_dir)
     unfinished_key = "websocket:unfinished"
     completed_key = "websocket:completed"
-    (webui_dir / f"{SessionManager.safe_key(unfinished_key)}.jsonl").write_text(
-        '{"event":"user","chat_id":"unfinished","text":"keep going"}\n'
-        '{"event":"message","chat_id":"unfinished","kind":"progress","text":"Working"}\n',
-        encoding="utf-8",
-    )
-    (webui_dir / f"{SessionManager.safe_key(completed_key)}.jsonl").write_text(
-        '{"event":"user","chat_id":"completed","text":"done"}\n'
-        '{"event":"message","chat_id":"completed","text":"finished"}\n'
-        '{"event":"turn_end","chat_id":"completed"}\n',
-        encoding="utf-8",
-    )
+    stored = SessionManager(tmp_path / "workspace")
+    stored.append_history(unfinished_key, [history_module.fact_from_record(record) for record in (
+        {"event": "user", "text": "keep going"},
+        {"event": "message", "kind": "progress", "text": "Working"},
+    )])
+    stored.append_history(completed_key, [history_module.fact_from_record(record) for record in (
+        {"event": "user", "text": "done"},
+        {"event": "message", "text": "finished"},
+        {"event": "turn_end"},
+    )])
     coordinator, bus, sessions = _coordinator(tmp_path / "workspace")
 
     await coordinator.scan()
@@ -208,7 +191,6 @@ async def test_scan_loads_only_sessions_that_need_webui_recovery(
 
 @pytest.mark.asyncio
 async def test_live_turn_followup_survives_restart_until_it_is_committed(tmp_path: Path) -> None:
-    """A message injected mid-turn is not lost between checkpoints."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     _persist(sessions, session)
@@ -239,7 +221,6 @@ async def test_live_turn_followup_survives_restart_until_it_is_committed(tmp_pat
 
 
 def test_followup_journal_keeps_every_uncommitted_message(tmp_path: Path) -> None:
-    """A live queue limit must never truncate durable WebUI follow-ups."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     followup_ids = [
@@ -266,7 +247,6 @@ def test_followup_journal_keeps_every_uncommitted_message(tmp_path: Path) -> Non
 
 
 def test_requeued_followup_preserves_its_journal_id(tmp_path: Path) -> None:
-    """Routing a recovered follow-up into a live turn must remain idempotent."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     original_id = record_pending_followup(
@@ -358,7 +338,6 @@ async def test_uncertain_tool_is_never_replayed(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_checkpoint_waits_for_confirmation(tmp_path: Path) -> None:
-    """Malformed or newer checkpoint phases fail closed pending confirmation."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     session.messages.append({"role": "user", "content": "deploy it"})
@@ -400,7 +379,6 @@ async def test_unknown_checkpoint_waits_for_confirmation(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 async def test_malformed_checkpoint_can_always_be_dismissed(tmp_path: Path) -> None:
-    """Corrupt private state must not trap the user in a failed recovery notice."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     session.messages.append({"role": "user", "content": "deploy it"})
@@ -429,7 +407,6 @@ async def test_malformed_checkpoint_can_always_be_dismissed(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_known_but_malformed_checkpoint_cannot_continue(tmp_path: Path) -> None:
-    """A known phase does not make corrupt tool state safe to resume."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     session.messages.append({"role": "user", "content": "send it"})
@@ -488,7 +465,6 @@ async def test_malformed_final_response_is_not_reported_as_restored(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_checkpoint_with_missing_tool_result_cannot_continue(tmp_path: Path) -> None:
-    """Never resume when persisted results do not cover every requested tool."""
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     session.messages.append({"role": "user", "content": "send both"})
