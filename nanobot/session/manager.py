@@ -42,13 +42,11 @@ _FORK_VOLATILE_METADATA_KEYS = {
     "_stopped_at_iteration_limit",
     PARENT_SESSION_KEY,
     SESSION_TYPE_KEY,
-    "goal_state",
     "pending_user_turn",
     "pending_user_followups",
     "runtime_checkpoint",
     "session_handle",
     "webui_recovery",
-    "thread_goal",
     "title",
     "title_user_edited",
 }
@@ -374,7 +372,10 @@ class SessionInfo(TypedDict):
     path: str
 
 
-def fork_session(source: Session, target_key: str, before_user_index: int) -> Session | None:
+def fork_session(
+    source: Session, target_key: str, before_user_index: int,
+    *, exclude_metadata: frozenset[str] = frozenset(),
+) -> Session | None:
     """Build a portable fork ending before the requested visible user message."""
     if before_user_index < 0:
         return None
@@ -394,7 +395,7 @@ def fork_session(source: Session, target_key: str, before_user_index: int) -> Se
         return None
 
     metadata = deepcopy(source.metadata)
-    for key in _FORK_VOLATILE_METADATA_KEYS:
+    for key in _FORK_VOLATILE_METADATA_KEYS | exclude_metadata:
         metadata.pop(key, None)
 
     last_consolidated = min(source.last_archived, len(copied))
@@ -429,10 +430,15 @@ class SessionManager:
         self.location = SessionLocation(workspace, sessions_root=sessions_root)
         self.sessions_dir = self.location.sessions_dir
         self._store = SqliteSessionStore(self.sessions_dir)
-        self._store.initialize()
+        self._store.initialize(workspace)
         self._delete_observer: Callable[[str], None] | None = None
         self.types = SessionTypes()
+        self._generation_exclusions: set[str] = set()
         self._state: SessionState | None = None
+
+    def exclude_generation_metadata(self, keys: frozenset[str]) -> None:
+        """Register feature metadata that cannot cross a fork or reset."""
+        self._generation_exclusions.update(keys)
 
     @property
     def state(self) -> SessionState:
@@ -440,7 +446,10 @@ class SessionManager:
         if self._state is None:
             from nanobot.session.state import SessionState
 
-            self._state = SessionState(self._store, on_delete=self._notify_delete, types=self.types)
+            self._state = SessionState(
+                self._store, on_delete=self._notify_delete, types=self.types,
+                generation_exclusions=self._generation_exclusions,
+            )
         return self._state
 
     def _notify_delete(self, key: str) -> None:
@@ -457,6 +466,26 @@ class SessionManager:
     def set_delete_observer(self, observer: Callable[[str], None]) -> None:
         """Observe explicit session deletion for process-local state cleanup."""
         self._delete_observer = observer
+
+    @staticmethod
+    def safe_key(key: str) -> str:
+        """Public helper used by HTTP handlers to map an arbitrary key to a stable filename stem."""
+        return SessionLocation.safe_key(key)
+
+    @staticmethod
+    def _storage_key(key: str) -> str:
+        """Collision-resistant encoding for internal session storage filenames."""
+        return SessionLocation.storage_key(key)
+
+    @staticmethod
+    def _decode_storage_key(stem: str) -> str | None:
+        """Reverse _storage_key(): decode a base64url (no-padding) stem back to the original key."""
+        return SessionLocation.decode_storage_key(stem)
+
+    @staticmethod
+    def decode_storage_key(stem: str) -> str | None:
+        """Public decoder for components that inspect canonical session filenames."""
+        return SessionManager._decode_storage_key(stem)
 
     def _require_offline_mutation(self) -> None:
         if self._state is not None and self._state.is_bound:
@@ -555,7 +584,9 @@ class SessionManager:
             source = self._store.load(source_key)
             if source is None:
                 return None
-            target = fork_session(source, target_key, before_user_index)
+            target = fork_session(
+                source, target_key, before_user_index, exclude_metadata=frozenset(self._generation_exclusions),
+            )
             if target is not None:
                 self._store.save(target)
                 self._store.copy_history_prefix(source_key, target, before_user_index)
