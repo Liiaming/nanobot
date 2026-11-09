@@ -201,6 +201,14 @@ function getScroller(container: HTMLElement): HTMLElement {
   return scroller;
 }
 
+function mockMessageEnd(scroller: HTMLElement) {
+  const rows = scroller.querySelectorAll<HTMLElement>(".thread-message-row");
+  const row = rows[rows.length - 1];
+  scroller.getBoundingClientRect = () => ({ bottom: scroller.clientHeight } as DOMRect);
+  row.getBoundingClientRect = () => ({ height: 100, bottom: scroller.scrollHeight - scroller.scrollTop } as DOMRect);
+  act(() => window.dispatchEvent(new Event("resize")));
+}
+
 async function renderPromptRailViewport({
   scrollTo,
   messages: promptMessages = makePromptExchangeMessages(5),
@@ -922,6 +930,7 @@ describe("ThreadViewport", () => {
     await flushAnimationFrame();
     followTo.mockClear();
 
+    mockMessageEnd(scroller);
     act(() => {
       fireEvent.wheel(scroller, { deltaY: -24 });
       scroller.scrollTop = 1_380;
@@ -970,6 +979,126 @@ describe("ThreadViewport", () => {
       .not.toBeInTheDocument();
   });
 
+  it("keeps uncommanded scrolling user-owned through layout changes and a tail reversal", async () => {
+    const { scroller } = await renderPromptRailViewport();
+    expect(scroller.scrollTop).toBe(1_200);
+
+    act(() => {
+      scroller.scrollTop = 1_180;
+      fireEvent.scroll(scroller);
+      window.dispatchEvent(new Event("resize"));
+    });
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(1_180);
+
+    act(() => {
+      scroller.scrollTop = 1_000;
+      fireEvent.scroll(scroller);
+      scroller.scrollTop = 1_100;
+      fireEvent.scroll(scroller);
+    });
+    // A partial return must not let later layout clamping resume follow.
+    act(() => {
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1_500 });
+      scroller.scrollTop = 900;
+      fireEvent.scroll(scroller);
+      window.dispatchEvent(new Event("resize"));
+    });
+    await flushAnimationFrame();
+    act(() => {
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1_800 });
+      window.dispatchEvent(new Event("resize"));
+    });
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(900);
+
+    act(() => {
+      scroller.scrollTop = 1_200;
+      fireEvent.scroll(scroller);
+    });
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(1_200);
+
+    act(() => {
+      scroller.scrollTop = 1_000;
+      fireEvent.scroll(scroller);
+      window.dispatchEvent(new Event("resize"));
+    });
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(1_000);
+  });
+
+  it.each(["scroll-first", "layout-first"])("keeps the reading position through output and completion with %s delivery", async (ordering) => {
+    const threaded: UIMessage[] = [
+      { id: "u1", role: "user", content: "question", turnId: "turn-1", createdAt: 1 },
+      { id: "a1", role: "assistant", content: "answer", turnId: "turn-1", isStreaming: true, createdAt: 2 },
+    ];
+    const { container, rerender } = render(
+      <ThreadViewport messages={threaded} isStreaming activeTurnId="turn-1" composer={<div />} />,
+    );
+    const scroller = getScroller(container);
+    mockScrollGeometry(scroller, 1_900, 500, 1_400);
+    act(() => window.dispatchEvent(new Event("resize")));
+    await flushAnimationFrame();
+
+    act(() => {
+      scroller.scrollTop = 1_000;
+      if (ordering === "scroll-first") fireEvent.scroll(scroller);
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2_100 });
+      rerender(
+        <ThreadViewport messages={[threaded[0], { ...threaded[1], content: "answer with more output" }]} isStreaming activeTurnId="turn-1" composer={<div />} />,
+      );
+    });
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(1_000);
+
+    act(() => {
+      Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2_300 });
+      rerender(
+        <ThreadViewport messages={[threaded[0], { ...threaded[1], content: "final answer", isStreaming: false }]} isStreaming={false} composer={<div />} />,
+      );
+    });
+    await flushAnimationFrame();
+    expect(scroller.scrollTop).toBe(1_000);
+  });
+
+  it("tracks the message content edge independently of trailing space and motion ownership", () => {
+    const resizeObserver = stubResizeObserver();
+    try {
+      const { container } = render(<ThreadViewport messages={messages} isStreaming={false} composer={<div>composer</div>} />);
+      const scroller = getScroller(container);
+      const content = scroller.firstElementChild as HTMLElement;
+      const row = scroller.querySelector<HTMLElement>(".thread-message-row:last-child")!;
+      const gap = scroller.querySelector<HTMLElement>(".thread-message-end-gap")!;
+      let contentBottom = 565;
+      scroller.getBoundingClientRect = () => ({ bottom: 600 } as DOMRect);
+      gap.getBoundingClientRect = () => ({ height: 36 } as DOMRect);
+      row.getBoundingClientRect = () => ({ bottom: contentBottom, height: 100 } as DOMRect);
+      act(() => window.dispatchEvent(new Event("resize")));
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, value: 1000 },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, writable: true, value: 300 },
+      });
+      act(() => { scroller.dispatchEvent(new Event("scroll")); });
+      expect(screen.getByRole("button", { name: "Scroll to bottom" })).toBeInTheDocument();
+      contentBottom = 564;
+      act(() => { scroller.dispatchEvent(new Event("scroll")); });
+      expect(screen.queryByRole("button", { name: "Scroll to bottom" })).not.toBeInTheDocument();
+      contentBottom = 570;
+      const observer = resizeObserver.observers.find((item) => item.elements.includes(content))!;
+      act(() => { observer.callback([], observer); });
+      expect(screen.getByRole("button", { name: "Scroll to bottom" })).toBeInTheDocument();
+      vi.spyOn(ThreadMotionCoordinator.prototype, "navigateLatestTo").mockReturnValue("started");
+      fireEvent.click(screen.getByRole("button", { name: "Scroll to bottom" }));
+      expect(screen.queryByRole("button", { name: "Scroll to bottom" })).not.toBeInTheDocument();
+      fireEvent.wheel(scroller, { deltaY: -20 });
+      expect(screen.getByRole("button", { name: "Scroll to bottom" })).toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
   it("keeps the scroll-to-bottom button above a growing composer", async () => {
     const resizeObserver = stubResizeObserver();
 
@@ -988,6 +1117,7 @@ describe("ThreadViewport", () => {
         scrollTop: { configurable: true, value: 0 },
       });
 
+      mockMessageEnd(scroller);
       act(() => {
         dispatchUserScroll(scroller);
       });
@@ -1046,6 +1176,7 @@ describe("ThreadViewport", () => {
       scrollTop: { configurable: true, writable: true, value: 0 },
     });
 
+    mockMessageEnd(scroller);
     act(() => {
       dispatchUserScroll(scroller);
     });
@@ -1652,6 +1783,19 @@ describe("ThreadViewport", () => {
 
       expect(scroller.scrollTop).toBe(260);
       expect(replacement.getBoundingClientRect().top).toBe(120);
+
+      // ResizeObserver may arrive before the next native scroll event.
+      hitTarget = replacement;
+      scroller.scrollTop = 240;
+      anchorDocumentTop += 60;
+      scrollHeight += 60;
+      act(() => { observer?.callback([], observer); });
+      expect(scroller.scrollTop).toBe(240);
+      act(() => { fireEvent.scroll(scroller); });
+      anchorDocumentTop += 40;
+      scrollHeight += 40;
+      act(() => { observer?.callback([], observer); });
+      expect(scroller.scrollTop).toBe(280);
     } finally {
       hitTest.restore();
       resizeObserver.restore();
@@ -2379,6 +2523,7 @@ describe("ThreadViewport", () => {
         clientHeight: { configurable: true, value: 600 },
         scrollTop: { configurable: true, writable: true, value: 300 },
       });
+      mockMessageEnd(scroller);
       act(() => {
         dispatchUserScroll(scroller);
       });

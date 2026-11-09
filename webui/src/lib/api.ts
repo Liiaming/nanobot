@@ -385,6 +385,7 @@ function parseThreadProjectionEvent(value: unknown, validatedGraphs: ReadonlySet
       if (value.text !== undefined && typeof value.text !== "string") break;
       return value as unknown as ThreadProjectionEvent;
     case "context_compaction":
+      if (value.context_graph !== undefined && !validatedGraphs.has(value.context_graph) && !isContextGraph(value.context_graph)) break;
       if (value.context_snapshot !== undefined && !isContextInspection(value.context_snapshot, (graph): graph is ContextGraph => validatedGraphs.has(graph) || isContextGraph(graph))) break;
       if (typeof value.compaction_id !== "string" || !value.compaction_id
         || !isCompactionPhase(value.phase)
@@ -1593,6 +1594,12 @@ export async function updateRuntimeConfigSettings(
   values: Record<string, import("@/lib/types").RuntimeConfigValue>,
 ): Promise<SettingsPayload> {
   return mutation<SettingsPayload>(transport, "settings.runtime_config.update", { values });
+}
+
+export async function checkSandboxSettings(
+  transport: WebUIMutationTransport,
+): Promise<{ sandbox: import("@/lib/types").SandboxCheck }> {
+  return mutation(transport, "settings.sandbox.check", {});
 }
 
 export function starPromptAction(

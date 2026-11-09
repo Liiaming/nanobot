@@ -88,7 +88,6 @@ function makeClient() {
     },
     getRunState: lifecycle.getRunState.bind(lifecycle),
     restorePendingRun: lifecycle.restorePendingRun.bind(lifecycle),
-    getRunStartedAt: lifecycle.getRunStartedAt.bind(lifecycle),
     getRunTurnId: lifecycle.getRunTurnId.bind(lifecycle),
     isRunCompleted: lifecycle.isRunCompleted.bind(lifecycle),
     finishRunLocally: vi.fn(lifecycle.finishRunLocally.bind(lifecycle)),
@@ -1200,11 +1199,16 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("button", { name: "Play context history" })).toBeEnabled();
     expect(screen.getByText("Waiting for answer")).toBeInTheDocument();
     const sidebar = screen.getByTestId("context-sidebar");
+    // HappyDOM has no CSS timeline; retain a real pending exit for the close assertions.
+    let finishExit!: () => void;
+    const finished = new Promise<void>((resolve) => { finishExit = resolve; });
+    Object.defineProperty(sidebar, "getAnimations", { value: () => [{ finished }] });
     fireEvent.click(trigger);
     expect(screen.getByTestId("context-sidebar")).toBe(sidebar);
     expect(sidebar).toHaveAttribute("data-closing");
     expect(footer).toContainElement(input);
     expect(input).toHaveValue("Preserve this draft");
+    await act(async () => finishExit());
     await waitFor(() => expect(screen.queryByTestId("context-sidebar")).not.toBeInTheDocument());
     view.unmount();
     footer.remove();
@@ -1698,6 +1702,44 @@ describe("ThreadShell", () => {
     expect(screen.getByText("Default")).toBeInTheDocument();
     await openMessageActions("Reply from the actual provider");
     expect(await screen.findByText("backup")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["bwrap", "MacIntel", "Bubblewrap (bwrap)", "Configure bwrap path"],
+    ["seatbelt", "Linux x86_64", "macOS Seatbelt (sandbox-exec)", "Configure sandbox-exec path"],
+  ] as const)("uses the gateway's %s launcher and links to its path editor", async (backend, browserPlatform, launcher, action) => {
+    const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(browserPlatform);
+    try {
+      const client = makeClient();
+      const openSettings = vi.fn();
+      const settings = modelSettings("test-model", "deepseek");
+      settings.advanced.exec_sandbox_status = {
+        state: "unavailable", reason: "launcher_missing", launcher: null,
+        revision: "gateway-launcher", supported_backend: backend,
+      };
+      render(wrap(client, <ThreadShell session={session("sandbox-notice")} title="Sandbox notice"
+        onToggleSidebar={() => {}} settingsSnapshot={settings} onOpenSandboxSettings={openSettings}
+      />, undefined, "tok", ["webui.sandbox-settings.v1"]));
+      const input = await screen.findByRole("textbox");
+      fireEvent.change(input, { target: { value: "Keep my draft" } });
+      input.focus();
+      act(() => {
+        client._emitChat("sandbox-notice", { event: "user_message", chat_id: "sandbox-notice",
+          turn_id: "sandbox-turn", starts_turn: true, text: "Run a command" });
+        client._emitChat("sandbox-notice", { event: "message", chat_id: "sandbox-notice", text: "",
+          turn_id: "sandbox-turn", kind: "progress", tool_events: [{
+            name: "exec", phase: "error", error_code: "sandbox_launcher_missing", call_id: "sandbox-command",
+          }] });
+      });
+      const banner = (await screen.findByRole("button", { name: action })).closest<HTMLElement>('[role="status"]')!;
+      expect(banner).toHaveTextContent(launcher);
+      expect(input).toHaveFocus();
+      fireEvent.click(within(banner).getByRole("button", { name: action }));
+      expect(openSettings).toHaveBeenCalledWith("sandbox-launcher");
+      expect(input).toHaveValue("Keep my draft");
+    } finally {
+      platform.mockRestore();
+    }
   });
 
   it("shows a dismissible, session-scoped fallback notice without changing the composer preset", async () => {
@@ -4152,7 +4194,7 @@ describe("ThreadShell", () => {
     act(() => client._emitSessionUpdate("visibility-complete-a", "thread"));
     await waitFor(() => expect(screen.getByText("completed while hidden")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
-    expect(client.getRunStartedAt("visibility-complete-a")).toBeNull();
+    expect(client.getRunState("visibility-complete-a").startedAt).toBeNull();
 
     rerender(view("visibility-complete-b"));
     await waitFor(() => expect(screen.getByText("other thread")).toBeInTheDocument());
@@ -4259,7 +4301,7 @@ describe("ThreadShell", () => {
       expect(screen.getByText("saved answer prefix")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
       expect(client.reconcileCanonicalCompletion).not.toHaveBeenCalled();
-      expect(client.getRunStartedAt(chatId)).toBe(1_700);
+      expect(client.getRunState(chatId).startedAt).toBe(1_700);
 
       const input = screen.getByRole("textbox", { name: "Message input" });
       fireEvent.change(input, { target: { value: "queued guidance" } });
