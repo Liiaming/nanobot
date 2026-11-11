@@ -17,6 +17,7 @@ from nanobot.bus.outbound_events import (
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.session import turn_continuation
+from nanobot.session.display_history import HistoryFact, HistoryKind, HistoryReader
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.recovery import (
@@ -99,6 +100,7 @@ class RecoveryCoordinator:
             session = await self.sessions.state.get(key)
             try:
                 await self._recover_session(session, route[1])
+                await self._close_interrupted_turns(session)
                 await self._requeue_pending_followups(session)
             except Exception:
                 logger.exception("failed to recover interrupted WebUI session {}", session.key)
@@ -140,7 +142,12 @@ class RecoveryCoordinator:
                 and state["status"] == "resuming"
                 and state["recovery_id"] == recovery_id
             )
-        if message.channel != "websocket":
+        from nanobot.session.session_messages import session_message_input
+
+        chat_id = message.chat_id if message.channel == "websocket" else None
+        if session_message_input(message) is not None:
+            chat_id = webui_chat_id(message.session_key)
+        if chat_id is None:
             return True
         session = await self.sessions.state.get(message.session_key)
         state = recovery_state_from_metadata(session.metadata)
@@ -164,7 +171,7 @@ class RecoveryCoordinator:
                 reason="superseded",
             )
             await self.sessions.state.restore_interruption(session)
-            await self._publish(message.chat_id, recovered)
+            await self._publish(chat_id, recovered)
         return True
 
     async def turn_completed(
@@ -421,6 +428,31 @@ class RecoveryCoordinator:
                 require_existing_session=True,
             )
         )
+
+    async def _close_interrupted_turns(self, session: Session) -> None:
+        # Startup has no live execution owners. Persist their terminal identities
+        # before admitting new work so reconnecting clients can settle old runs.
+        queued_turns = {message.metadata.get(WEBUI_TURN_METADATA_KEY) for message in pending_followups(session)}
+
+        def completions(history: HistoryReader) -> list[HistoryFact]:
+            if not history.turn_count:
+                return []
+            tail = history.read_entries(history.turn_count - 1)
+            if not tail or tail[-1][1].kind is HistoryKind.COMPLETION:
+                # In particular, don't bypass a transcript_incomplete marker.
+                return []
+            sequences: dict[str, int] = {}
+            for _, fact in tail:
+                if fact.turn_id and fact.turn_id not in queued_turns:
+                    sequences[fact.turn_id] = max(sequences.get(fact.turn_id, 0), fact.sequence or 0)
+            return [HistoryFact(
+                HistoryKind.COMPLETION, {"outcome": "interrupted"}, turn_id=turn_id,
+                phase="complete", sequence=sequence + 1, created_at_ms=int(datetime.now().timestamp() * 1000),
+            ) for turn_id, sequence in sequences.items()]
+
+        facts = await self.sessions.state.project_history(session.key, completions)
+        if facts:
+            await self.sessions.state.append_history(session.key, facts, expected_generation=session.generation)
 
     async def _requeue_pending_followups(self, session: Session) -> None:
         for message in pending_followups(session):

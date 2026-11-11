@@ -9,6 +9,7 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import RecoveryStateEvent, SessionUpdatedEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import ProviderConversationState
+from nanobot.session.display_history import HistoryFact, HistoryKind
 from nanobot.session.keys import UNIFIED_SESSION_KEY
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.recovery import (
@@ -20,6 +21,7 @@ from nanobot.session.recovery import (
     pending_followups,
     record_pending_followup,
 )
+from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
 from nanobot.webui import history as history_module
 from nanobot.webui.recovery import RecoveryActionError, RecoveryCoordinator
 
@@ -62,14 +64,12 @@ async def test_restart_before_model_call_waits_for_confirmation(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_stale_incomplete_transcript_waits_for_confirmation(tmp_path: Path, monkeypatch) -> None:
+async def test_stale_incomplete_transcript_waits_for_confirmation(tmp_path: Path) -> None:
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     _persist(sessions, session)
-    monkeypatch.setattr(
-        "nanobot.webui.transcript.has_unfinished_transcript_tail",
-        lambda _key, **_kwargs: True,
-    )
+    incomplete = HistoryFact(HistoryKind.COMPLETION, {"transcript_incomplete": True}, turn_id="failed-persistence")
+    sessions.append_history(session.key, [incomplete])
 
     coordinator, bus, restarted = _coordinator(tmp_path)
     await coordinator.scan()
@@ -78,6 +78,7 @@ async def test_stale_incomplete_transcript_waits_for_confirmation(tmp_path: Path
     state = restarted.get_or_create("websocket:chat").metadata[RECOVERY_METADATA_KEY]
     assert state["status"] == "awaiting_user"
     assert state["reason"] == "interrupted_without_checkpoint"
+    assert await restarted.state.project_history(session.key, lambda history: history.all_facts()) == [incomplete]
     event = bus.outbound.get_nowait().event
     assert isinstance(event, RecoveryStateEvent)
     assert event.status == "awaiting_user"
@@ -204,20 +205,64 @@ async def test_scan_loads_only_sessions_that_need_webui_recovery(
 
 
 @pytest.mark.asyncio
-async def test_live_turn_followup_survives_restart_until_it_is_committed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("interrupted_turn, activity", [("original", False), ("original", True), ("recovery:previous", True)])
+async def test_restart_closes_interrupted_turn_before_requeuing_followup(
+    tmp_path: Path, interrupted_turn: str, activity: bool,
+) -> None:
+    sessions = SessionManager(tmp_path)
+    session = sessions.get_or_create("websocket:chat")
+    session.messages.append({"role": "user", "content": "old request"})
+    session.metadata[PENDING_USER_TURN_KEY] = True
+    record_pending_followup(session, InboundMessage(
+        channel="websocket", sender_id="user", chat_id="chat", content="new request",
+        metadata={"webui": True, "webui_turn_id": "queued"},
+    ))
+    _persist(sessions, session)
+    facts = [HistoryFact(HistoryKind.INPUT, {"text": "old request"}, turn_id="original", phase="user")]
+    if interrupted_turn != "original":
+        facts.append(HistoryFact(HistoryKind.COMPLETION, {"outcome": "interrupted"}, turn_id="original", phase="complete"))
+    if activity:
+        facts.append(HistoryFact(HistoryKind.TOOL_ACTIVITY, {"text": "waiting"}, turn_id=interrupted_turn, phase="activity", sequence=7))
+    facts.append(HistoryFact(HistoryKind.INPUT, {"text": "new request"}, turn_id="queued", phase="user"))
+    sessions.append_history(session.key, facts)
+
+    coordinator, bus, restarted = _coordinator(tmp_path)
+    await coordinator.scan()
+
+    def completions(history):
+        return [fact for fact in history.all_facts() if fact.kind is HistoryKind.COMPLETION]
+
+    ended = await restarted.state.project_history(session.key, completions)
+    assert interrupted_turn in {fact.turn_id for fact in ended}
+    assert "queued" not in {fact.turn_id for fact in ended}
+    assert all(fact.content["outcome"] == "interrupted" for fact in ended)
+    queued = bus.inbound.get_nowait()
+    assert queued.metadata["webui_turn_id"] == "queued"
+    assert await coordinator.admit(queued)
+    assert (await restarted.state.get(session.key)).metadata[RECOVERY_METADATA_KEY]["reason"] == "superseded"
+
+    # Repeated startup must not append another completion or lose the queued input.
+    await coordinator.scan()
+    assert await restarted.state.project_history(session.key, completions) == ended
+    assert len(pending_followups(await restarted.state.get(session.key))) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cross_session", [False, True])
+async def test_live_turn_followup_survives_restart_until_it_is_committed(tmp_path: Path, cross_session: bool) -> None:
     sessions = SessionManager(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     _persist(sessions, session)
-    followup_id = record_pending_followup(
-        session,
-        InboundMessage(
-            channel="websocket",
-            sender_id="user",
-            chat_id="chat",
-            content="also check the logs",
-            metadata={"webui": True},
-        ),
+    metadata = {SESSION_MESSAGE_METADATA_KEY: {
+        "message_id": "source-message", "created_at_ms": 1, "expect_reply": False,
+        "source_handle": "luma", "source_session_key": "websocket:source", "target_session_key": session.key,
+    }} if cross_session else {"webui": True}
+    message = InboundMessage(
+        channel="system" if cross_session else "websocket", sender_id="session" if cross_session else "user",
+        chat_id=session.key if cross_session else "chat", content="/stop" if cross_session else "also check the logs", metadata=metadata,
+        session_key_override=session.key, input_role="user" if cross_session else None,
     )
+    followup_id = record_pending_followup(session, message)
     assert followup_id is not None
     sessions.save(session)
 
@@ -225,9 +270,16 @@ async def test_live_turn_followup_survives_restart_until_it_is_committed(tmp_pat
     await coordinator.scan()
 
     queued = bus.inbound.get_nowait()
-    assert queued.content == "also check the logs"
+    assert (queued.channel, queued.content, queued.input_role, queued.timestamp) == (
+        message.channel, message.content, message.input_role, message.timestamp,
+    )
+    assert queued.session_key == session.key
+    assert queued.require_existing_session
+    if cross_session:
+        assert queued.metadata[SESSION_MESSAGE_METADATA_KEY] == metadata[SESSION_MESSAGE_METADATA_KEY]
     assert queued.metadata["_recovery_followup_id"] == followup_id
     restored = restarted.get_or_create("websocket:chat")
+    assert record_pending_followup(restored, queued) == followup_id
     assert len(pending_followups(restored)) == 1
 
     acknowledge_pending_followups(restored, [followup_id])
