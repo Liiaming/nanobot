@@ -47,7 +47,7 @@ This page is the complete configuration reference. For task-oriented setup, use 
 | Add MCP servers | [MCP](#mcp-model-context-protocol) |
 | Review shell, workspace, and SSRF controls | [Security](#security) |
 | Control access and pairing | [Pairing](#pairing) |
-| Tune gateway jobs, sessions, and tools | [Gateway Heartbeat](#gateway-heartbeat), [Auto Compact](#auto-compact), [Unified Session](#unified-session), [Tool Hint Max Length](#tool-hint-max-length) |
+| Tune gateway jobs, sessions, and tools | [Gateway Heartbeat](#gateway-heartbeat), [Auto Compact](#auto-compact), [Tool Hint Max Length](#tool-hint-max-length) |
 
 ## Where a Setting Lives
 
@@ -1463,14 +1463,6 @@ In `config.json`, set `providers.<name>.api` for the built-in `custom` provider 
 
 `supportedApis` must contain at least one of `chat_completions`, `responses`, or `anthropic_messages`. `preferredApi` must belong to that list and defaults to its first entry. Auto presets inherit this default; explicit presets can only use protocols in the connection's list. Before removing a protocol used by an explicit preset, update that preset first.
 
-### Legacy OpenAI API selector migration
-
-If your configuration uses `providers.openai.apiType` (or `api_type`), save it with a version that supports the migration before upgrading further. Saving replaces the old field with `api`: `chat_completions` or `responses` becomes a single-API declaration, while `auto` keeps automatic selection. If both fields are present, `api` takes precedence, including `api: null`.
-
-The migration also accepts the `NANOBOT_PROVIDERS__OPENAI__API_TYPE` and `NANOBOT_PROVIDERS__OPENAI__APITYPE` environment variables.
-
-The old field is accepted in the first release containing this migration and the immediately following release. The third release will require the current `api` format.
-
 ### Preset request API
 
 Leave API selection on **Auto** unless your service requires a specific protocol. To change it, open **Settings → Models → a preset → Advanced options → API connection**. Choose **Responses**, **Chat Completions**, or **Anthropic Messages** from the available options. Hover, focus, or tap a setting label for help. Credentials and endpoint URLs stay in the provider; two presets sharing a provider can select different APIs.
@@ -2602,39 +2594,6 @@ The effective timezone affects runtime time strings shown to the model, such as 
 Common examples: `UTC`, `America/New_York`, `America/Los_Angeles`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo`, `Asia/Shanghai`, `Asia/Singapore`, `Australia/Sydney`.
 
 > Need another timezone? Browse the full [IANA Time Zone Database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
-
-## Unified Session
-
-Open **Settings → System** and change **Shared sessions**. Enable it only for a single-user setup where conversations should share context. Follow any restart prompt.
-
-By default, each channel × chat ID combination gets its own session. If you use nanobot across multiple channels (e.g. Telegram + Discord + CLI) and want them to share the same conversation, enable `unifiedSession`:
-
-<details>
-<summary>Manual configuration</summary>
-
-```json
-{
-  "agents": {
-    "defaults": {
-      "unifiedSession": true
-    }
-  }
-}
-```
-
-</details>
-
-When enabled, all incoming messages — regardless of which channel they arrive on — are routed into a single shared session. Switching from Telegram to Discord (or any other channel) continues the same conversation seamlessly.
-
-| Behavior | `false` (default) | `true` |
-|----------|-------------------|--------|
-| Conversation scope | Separate for each channel and chat | Shared across channels and chats |
-| Cross-channel continuity | No | Yes |
-| `/new` clears | Current channel session | Shared session |
-| `/stop` finds tasks | By channel session | By shared session |
-| Separate conversations explicitly assigned by a channel (e.g. Telegram threads) | Kept separate | Still kept separate |
-
-> Use this only for single-user, multi-device setups: messages from different chats can share conversation context. It is **off by default**.
 
 ## Disabled Skills
 
