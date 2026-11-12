@@ -13,11 +13,11 @@ import { ArrowDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { PromptRail } from "@/components/thread/PromptRail";
-import { SubagentThreadMessages, useHasSubagentResults } from "@/components/thread/SubagentTaskResults";
+import { SubagentThreadMessages } from "@/components/thread/SubagentTaskResults";
 import { DiagramScope } from "@/components/markdown-diagrams/context";
 import { DiffViewportContext } from "./activity/DiffViewportContext";
 import { ThreadHistoryStatus } from "@/components/thread/ThreadHistoryStatus";
-import { isAgentActivityMember } from "@/components/thread/AgentActivityCluster";
+import { isActivityWindowMember } from "@/lib/activity-timeline";
 import { ThreadCameraController } from "@/components/thread/thread-camera";
 import { HISTORY_HOLD_PX, ThreadHistorySpring, type HistoryRevealPhase } from "@/components/thread/thread-history-spring";
 import {
@@ -60,6 +60,7 @@ interface ThreadViewportProps {
   /** Override when message ownership changes after the selected conversation. */
   messagesKey?: string | null;
   conversationReady?: boolean;
+  onVisibleMessagesChange?: (messages: UIMessage[]) => void;
   showScrollToBottomButton?: boolean;
   cliApps?: CliAppInfo[];
   mcpPresets?: McpPresetInfo[];
@@ -160,8 +161,8 @@ export function windowMessages(messages: UIMessage[], visibleCount: number): UIM
   let start = Math.max(0, messages.length - visibleCount);
   while (
     start > 0
-    && isAgentActivityMember(messages[start])
-    && isAgentActivityMember(messages[start - 1])
+    && isActivityWindowMember(messages[start])
+    && isActivityWindowMember(messages[start - 1])
   ) {
     start -= 1;
   }
@@ -287,6 +288,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   conversationKey = null,
   messagesKey = conversationKey,
   conversationReady = true,
+  onVisibleMessagesChange,
   showScrollToBottomButton = true,
   cliApps = [],
   mcpPresets = [],
@@ -460,8 +462,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       },
     });
   }
-  const hasTaskResults = useHasSubagentResults();
-  const hasMessages = messages.length > 0 || (hasTaskResults && conversationReady);
+  const hasMessages = messages.length > 0;
   const hasThreadLayout = hasMessages || initialLoading;
   useLayoutEffect(() => {
     scrollRef.current = hasMessages
@@ -472,6 +473,9 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     () => windowMessages(messages, visibleMessageCount),
     [messages, visibleMessageCount],
   );
+  useLayoutEffect(() => {
+    if (conversationReady) onVisibleMessagesChange?.(visibleMessages);
+  }, [conversationReady, onVisibleMessagesChange, visibleMessages]);
   const hiddenMessageCount = messages.length - visibleMessages.length;
   const historyUnknown = hasMoreBefore === null;
   const historyExhausted = hasMoreBefore === false && hiddenMessageCount === 0;

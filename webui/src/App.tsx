@@ -611,8 +611,9 @@ export default function App() {
   const bootstrapSecretRef = useRef("");
 
   const refreshReadyClient = useCallback(
-    async (client: NanobotClient, fallbackSurface: RuntimeSurface) => {
+    async (client: NanobotClient, fallbackSurface: RuntimeSurface, signal?: AbortSignal) => {
       const boot = await fetchBootstrap("", bootstrapSecretRef.current);
+      signal?.throwIfAborted();
       const url = deriveWsUrl(boot.ws_path, boot.token, boot.ws_url);
       const runtimeSurface = resolveRuntimeSurface(boot.runtime_surface, fallbackSurface);
       const runtimeHost = createRuntimeHost(runtimeSurface, boot.runtime_capabilities);
@@ -661,9 +662,9 @@ export default function App() {
             url,
             maxFrameBytes: boot.limits?.transport.max_frame_bytes,
             socketFactory: runtimeHost.socketFactory,
-            onReauth: async () => {
+            onReauth: async (signal) => {
               try {
-                const refreshed = await refreshReadyClient(client, runtimeSurface);
+                const refreshed = await refreshReadyClient(client, runtimeSurface, signal);
                 return refreshed.url;
               } catch {
                 return null;
@@ -941,6 +942,9 @@ function Shell({
   const { skills, loading: skillsLoading, error: skillsError } = useSkills(getToken);
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const settingsSnapshotRef = useRef(settingsSnapshot);
+  settingsSnapshotRef.current = settingsSnapshot;
+  const settingsOwnsSnapshot = view !== "chat" && view !== "remote";
   const settingsRefreshGenerationRef = useRef(0);
   const [pendingAutomationMessage, setPendingAutomationMessage] = useState<{
     id: string;
@@ -1081,10 +1085,14 @@ function Shell({
   }, [client]);
 
   useEffect(() => {
+    if (settingsOwnsSnapshot || settingsSnapshotRef.current !== null) {
+      setSettingsLoading(false);
+      return;
+    }
     let cancelled = false;
     const requestGeneration = settingsRefreshGenerationRef.current;
     setSettingsLoading(true);
-    fetchSettings(getToken())
+    fetchSettings(getToken(), "", client)
       .then((payload) => {
         if (!cancelled && requestGeneration === settingsRefreshGenerationRef.current) {
           setSettingsSnapshot(payload);
@@ -1101,7 +1109,7 @@ function Shell({
     return () => {
       cancelled = true;
     };
-  }, [getToken]);
+  }, [client, getToken, settingsOwnsSnapshot]);
 
   useEffect(() => {
     try {
@@ -1924,7 +1932,7 @@ function Shell({
     let cancelled = false;
     let retryTimer: number | undefined;
     const refreshSettings = (generation: number, attempt = 0): void => {
-      void fetchSettings(getToken())
+      void fetchSettings(getToken(), "", client)
         .then((payload) => {
           if (!cancelled && generation === settingsRefreshGenerationRef.current) {
             setSettingsSnapshot(payload);

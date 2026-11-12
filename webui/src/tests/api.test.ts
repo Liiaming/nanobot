@@ -34,6 +34,7 @@ import {
   fetchTrendingMarketplaceSkills,
   fetchWebuiThread,
   fetchSubagentThread,
+  fetchSubagentTasks,
   fetchWebuiThreadTraceDetail,
   fetchWorkspaces,
   importMcpConfig,
@@ -103,6 +104,20 @@ describe("webui API helpers", () => {
       "/api/sessions/websocket%3Achat-1/subagents/task-1/webui-thread",
       expect.objectContaining({ headers: { Authorization: "Bearer tok" } }),
     );
+  });
+
+  it("splits a large subagent window into bounded reads", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({ tasks: [] }) } as Response);
+    const turnIds = Array.from({ length: 400 }, (_, index) => `turn-${index}-${"x".repeat(32)}`);
+    await expect(fetchSubagentTasks("tok", "websocket:chat-1", {
+      turnIds, trackedIds: ["task-1"],
+    })).resolves.toEqual({ tasks: [] });
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url), "http://localhost"));
+    expect(urls.length).toBeGreaterThan(1);
+    expect(urls.every((url) => url.search.length <= 5001)).toBe(true);
+    expect(urls.every((url) => url.searchParams.get("scope") === "window")).toBe(true);
+    expect(urls.flatMap((url) => url.searchParams.getAll("turn_id"))).toEqual(turnIds);
+    expect(urls.flatMap((url) => url.searchParams.getAll("track"))).toEqual(["task-1"]);
   });
 
   it("percent-encodes websocket keys when fetching webui-thread snapshot", async () => {
@@ -705,6 +720,34 @@ describe("webui API helpers", () => {
         headers: { Authorization: "Bearer tok" },
       }),
     );
+  });
+
+  it("shares only pending settings reads within the same client", async () => {
+    const pending: ((response: Response) => void)[] = [];
+    vi.mocked(fetch).mockImplementation(() => new Promise<Response>((resolve) => pending.push(resolve)));
+    const first = fetchSettings("tok", "", mutationTransport);
+    expect(fetchSettings("tok", "", mutationTransport)).toBe(first);
+    const other = fetchSettings("tok", "", { requestMutation });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    pending[0]({ ok: true, json: async () => ({ version: { current: "first" } }) } as Response);
+    pending[1]({ ok: true, json: async () => ({ version: { current: "other" } }) } as Response);
+    expect((await first).version?.current).toBe("first");
+    expect((await other).version?.current).toBe("other");
+    const refreshed = fetchSettings("tok", "", mutationTransport);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    pending[2]({ ok: true, json: async () => ({ version: { current: "refreshed" } }) } as Response);
+    expect((await refreshed).version?.current).toBe("refreshed");
+  });
+
+  it("reuses unchanged usage and requests model details explicitly", async () => {
+    const cached = { days: [], revision: "models" };
+    const json = vi.fn();
+    vi.mocked(fetch).mockResolvedValue({ status: 304, json } as unknown as Response);
+    expect(await fetchSettingsUsage("tok", { details: true, cached })).toBe(cached);
+    expect(fetch).toHaveBeenCalledWith("/api/settings/usage?details=true", expect.objectContaining({
+      headers: { Authorization: "Bearer tok", "If-None-Match": 'W/"models"' },
+    }));
+    expect(json).not.toHaveBeenCalled();
   });
 
   it("serializes model configuration creation", async () => {

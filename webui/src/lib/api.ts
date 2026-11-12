@@ -696,15 +696,53 @@ export async function updateAutomation(
   return mutation<AutomationsPayload>(transport, "automation.update", { id, values });
 }
 
-export async function fetchSubagentTasks(token: string, sessionKey: string): Promise<SubagentTasksPayload> {
-  const payload = await request<unknown>(
-    `/api/sessions/${encodeURIComponent(sessionKey)}/subagents`, token, undefined, API_READ_TIMEOUT_MS,
-  );
-  if (!isRecord(payload) || !Array.isArray(payload.tasks) || !payload.tasks.every(isSubagentTask)
-    || new Set(payload.tasks.map((task) => task.task_id)).size !== payload.tasks.length) {
-    throw new Error("Invalid subagent tasks response");
+export interface SubagentTaskWindow {
+  turnIds: string[];
+  trackedIds: string[];
+}
+
+export async function fetchSubagentTasks(
+  token: string, sessionKey: string, window: SubagentTaskWindow,
+): Promise<SubagentTasksPayload> {
+  const path = `/api/sessions/${encodeURIComponent(sessionKey)}/subagents`;
+  const queries: URLSearchParams[] = [];
+  let query = new URLSearchParams({ scope: "window" });
+  // Track the encoded length as it grows; re-serializing the whole target per id would be quadratic.
+  let length = query.toString().length;
+  let count = 0;
+  for (const [key, values] of [
+    ["turn_id", window.turnIds], ["track", window.trackedIds],
+  ] as const) {
+    for (const value of values) {
+      const pair = new URLSearchParams({ [key]: value }).toString();
+      // Keep request targets bounded, including percent-encoded identifiers.
+      if (count && (length + 1 + pair.length > 5000 || count >= 400)) {
+        queries.push(query);
+        query = new URLSearchParams({ scope: "window" });
+        length = query.toString().length;
+        count = 0;
+      }
+      query.append(key, value);
+      length += 1 + pair.length;
+      count += 1;
+    }
   }
-  return { tasks: payload.tasks };
+  queries.push(query);
+  const tasks = new Map<string, SubagentTasksPayload["tasks"][number]>();
+  for (const query of queries) {
+    const payload = await request<unknown>(
+      `${path}?${query}`, token, undefined, API_READ_TIMEOUT_MS,
+    );
+    if (!isRecord(payload) || !Array.isArray(payload.tasks) || !payload.tasks.every(isSubagentTask)
+      || new Set(payload.tasks.map((task) => task.task_id)).size !== payload.tasks.length) {
+      throw new Error("Invalid subagent tasks response");
+    }
+    for (const task of payload.tasks) {
+      const previous = tasks.get(task.task_id);
+      if (!previous || (task.revision ?? 0) > (previous.revision ?? 0)) tasks.set(task.task_id, task);
+    }
+  }
+  return { tasks: [...tasks.values()] };
 }
 
 export async function fetchSubagentThread(
@@ -842,28 +880,40 @@ export async function deleteSession(
   );
 }
 
-export async function fetchSettings(
+const settingsReads = new WeakMap<WebUIMutationTransport, Map<string, Promise<SettingsPayload>>>();
+
+export function fetchSettings(
   token: string,
   base: string = "",
+  scope?: WebUIMutationTransport,
 ): Promise<SettingsPayload> {
-  return request<SettingsPayload>(
-    `${base}/api/settings`,
-    token,
-    undefined,
-    API_READ_TIMEOUT_MS,
-  );
+  const load = () => request<SettingsPayload>(`${base}/api/settings`, token, undefined, API_READ_TIMEOUT_MS);
+  if (!scope) return load();
+  let reads = settingsReads.get(scope);
+  if (!reads) {
+    reads = new Map();
+    settingsReads.set(scope, reads);
+  }
+  const key = JSON.stringify([base, token]);
+  const pending = reads.get(key);
+  if (pending) return pending;
+  const read = load().finally(() => reads.delete(key));
+  reads.set(key, read);
+  return read;
 }
 
 export async function fetchSettingsUsage(
   token: string,
-  base: string = "",
+  options: { details?: boolean; cached?: NonNullable<SettingsPayload["usage"]>; signal?: AbortSignal } = {},
 ): Promise<NonNullable<SettingsPayload["usage"]>> {
-  return request<NonNullable<SettingsPayload["usage"]>>(
-    `${base}/api/settings/usage`,
-    token,
-    undefined,
-    API_READ_TIMEOUT_MS,
-  );
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  if (options.cached?.revision) headers["If-None-Match"] = `W/"${options.cached.revision}"`;
+  const response = await fetchWithTimeout(`/api/settings/usage${options.details ? "?details=true" : ""}`, {
+    headers, credentials: "same-origin", cache: "no-store", signal: options.signal,
+  }, API_READ_TIMEOUT_MS);
+  if (response.status === 304 && options.cached) return options.cached;
+  if (!response.ok) throw new ApiError(response.status, `HTTP ${response.status}`);
+  return await response.json() as NonNullable<SettingsPayload["usage"]>;
 }
 
 export type UpdateChannel = "stable" | "preview";
