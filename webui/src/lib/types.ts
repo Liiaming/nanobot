@@ -17,6 +17,7 @@ export interface UIContextCompaction extends ContextCompaction {
 
 export type UITurnPhase = "user" | "reasoning" | "activity" | "answer" | "complete";
 export type MessageDeliveryStatus = "sending" | "accepted" | "failed";
+export type InputProcessingStatus = "pending" | "consumed";
 export type MessageDeliveryErrorKind =
   | "message_too_big"
   | "workspace_scope_rejected"
@@ -184,6 +185,8 @@ export interface UIMessage {
   reasoningStreamId?: string;
   /** Ephemeral delivery lifecycle for optimistic user messages. */
   deliveryStatus?: MessageDeliveryStatus;
+  /** Live UI hint; not part of the persisted transcript. */
+  processingStatus?: InputProcessingStatus;
   deliveryErrorKind?: MessageDeliveryErrorKind;
 }
 
@@ -488,6 +491,19 @@ export interface UIFileEdit {
   diff?: UIFileDiff;
 }
 
+export type CodexFastMode = boolean | "ultrafast";
+
+export interface SessionModelOptions {
+  /** Null explicitly inherits the preset/provider value. */
+  reasoning_effort: string | null;
+  codex_fast_mode: CodexFastMode | null;
+}
+
+export interface ModelOptionsCapability {
+  reasoning_effort: { default: string | null; values: string[] };
+  codex_fast_mode?: { default: CodexFastMode; ultrafast_supported?: boolean };
+}
+
 export interface ChatSummary {
   /** Server-side session key, e.g. ``websocket:abcd-...``. */
   key: string;
@@ -500,6 +516,7 @@ export interface ChatSummary {
   preview: string;
   /** Model preset persisted for this session; null means it still follows the global default. */
   modelPreset?: string | null;
+  modelOptions?: SessionModelOptions;
   /** Unix epoch seconds when this session currently has a turn in flight. */
   runStartedAt?: number | null;
   /** Durable recovery state that needs attention after an interrupted turn. */
@@ -773,6 +790,8 @@ export interface SettingsPayload {
     temperature: number;
     reasoning_effort: string | null;
     reasoning_effort_values?: string[];
+    codex_fast_mode?: CodexFastMode | null;
+    model_options?: ModelOptionsCapability;
     supports_images?: boolean;
     api?: ModelAPIConfig | null;
     extra_headers?: Record<string, string> | null;
@@ -781,6 +800,7 @@ export interface SettingsPayload {
   }>;
   model_call_order: string[];
   model_call_order_editable: boolean;
+  image_fallback_configured?: boolean;
   /** Whether an actual legacy model configuration is available to convert. */
   model_configuration_migratable?: boolean;
   /** Host can resolve the default request API for an unsaved model configuration. */
@@ -806,6 +826,8 @@ export interface SettingsPayload {
     request_apis?: ProviderRequestAPI[];
     adapter_request_apis?: ProviderRequestAPI[];
     provider_api_configurable?: boolean;
+    codex_fast_mode_supported?: boolean;
+    codex_ultrafast_models?: string[];
     api?: ModelAPIConfig | null;
     oauth_account?: string | null;
     oauth_expires_at?: number | null;
@@ -1410,6 +1432,7 @@ export interface ModelConfigurationCreate {
   contextWindowTokens?: number;
   temperature?: number;
   reasoningEffort?: string | null;
+  codexFastMode?: CodexFastMode | null;
   supportsImages?: boolean;
   api?: ModelAPIConfig | null;
   extraHeaders?: string;
@@ -1426,6 +1449,7 @@ export interface ModelConfigurationUpdate {
   contextWindowTokens?: number;
   temperature?: number;
   reasoningEffort?: string | null;
+  codexFastMode?: CodexFastMode | null;
   supportsImages?: boolean;
   api?: ModelAPIConfig | null;
   extraHeaders?: string;
@@ -1542,6 +1566,7 @@ export type InboundEvent =
       chat_id: string;
       request_id?: string;
       temporary?: boolean;
+      live_turn_ids?: string[];
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
     }
@@ -1549,6 +1574,7 @@ export type InboundEvent =
       event: "message_accepted";
       chat_id: string;
       turn_id: string;
+      waiting_for_model?: true;
       media_urls?: UIMediaAttachment[];
       starts_turn?: boolean;
       active_turn_id?: string;
@@ -1558,6 +1584,7 @@ export type InboundEvent =
       event: "user_message";
       chat_id: string;
       text: string;
+      waiting_for_model?: true;
       turn_id?: string;
       active_turn_id?: string;
       starts_turn: boolean;
@@ -1662,6 +1689,8 @@ export type InboundEvent =
       run_id: string;
       sequence: number;
       phase: "started" | "completed" | "failed" | "cancelled";
+      /** Inputs being answered by this request; present on started when identified. */
+      response_input_ids?: string[];
       usage?: TurnUsage;
       round_usages?: RoundUsage[];
       context_window_tokens?: number;
@@ -1887,6 +1916,7 @@ export type Outbound =
       quoted_context?: string;
       intent?: "create_automation";
       user_shell?: true;
+      model_options?: SessionModelOptions;
       workspace_scope?: WorkspaceScopePayload;
       turn_id?: string;
       /** Marks messages sent by the embedded WebUI, without changing the
